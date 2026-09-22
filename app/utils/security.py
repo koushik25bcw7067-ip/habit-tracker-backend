@@ -31,12 +31,14 @@ def create_refresh_token(user_id: int) -> str:
 
 def decode_token(token: str, expected_type: str = "access") -> dict[str, Any]:
     try:
+        if token.lower().startswith("bearer "):
+            token = token.split(" ", 1)[1].strip()
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
         if payload.get("type") != expected_type or not payload.get("sub"):
             raise ValueError
         return payload
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token") from exc
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"DEBUG ERROR: {type(exc).__name__} - {str(exc)}") from exc
 
 def token_fingerprint(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()

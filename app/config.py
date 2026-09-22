@@ -9,9 +9,10 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
-    ai_api_key: str = ""
-    ai_api_url: str = "https://api.openai.com/v1/chat/completions"
-    ai_model: str = "gpt-4o-mini"
+    ai_api_key: str = "your_groq_api_key_here"
+    ai_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    ai_model: str = "gemini-3.6-flash"
+
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
 
