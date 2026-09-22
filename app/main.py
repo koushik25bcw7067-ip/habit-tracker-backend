@@ -43,14 +43,11 @@ app = FastAPI(
 
 
 # CORS
-cors_origins = list(settings.cors_origin_list)
-
-if "https://habit-tracker-app-green-chi.vercel.app" not in cors_origins:
-    cors_origins.append("https://habit-tracker-app-green-chi.vercel.app")
-
-if "http://localhost:5173" not in cors_origins:
-    cors_origins.append("http://localhost:5173")
-
+cors_origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://habit-tracker-app-green-chi.vercel.app",
+]
 
 app.add_middleware(
     CORSMiddleware,
@@ -80,7 +77,7 @@ for router in [
     app.include_router(router)
 
 
-# Day Planner router
+# Day Planner
 app.include_router(day_plans_router)
 
 
