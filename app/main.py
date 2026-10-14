@@ -18,6 +18,7 @@ from app.routers import (
     categories,
     goals,
     theme,
+    tasks,
 )
 
 from app.models import (
@@ -32,6 +33,7 @@ from app.models import (
     Recommendation,
     AIInsight,
     UserTheme,
+    UserTask,
 )
 
 from app.routers.day_plans import router as day_plans_router
@@ -76,6 +78,7 @@ for router in [
     categories.router,
     goals.router,
     theme.router,
+    tasks.router,
 ]:
     app.include_router(router)
 

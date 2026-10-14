@@ -23,6 +23,7 @@ The backend is the source of truth for numerical statistics. AI receives verifie
 - Recommendation accept/reject history
 - Optional OpenAI-compatible AI provider
 - AI analysis, weekly/monthly reports and new-habit suggestions
+- User-owned task CRUD with due dates, priorities, completion and reminder flags
 - Swagger/OpenAPI
 - Alembic migrations
 - Seed data and tests
@@ -140,6 +141,10 @@ unavailable.
 The protected `POST /ai/chat` endpoint accepts a `messages` array containing user/assistant
 history and returns `reply` plus `source_status`. Companion replies can use the user's saved
 world for tone, while numerical statements are grounded in verified habit and day-plan data.
+
+The protected `/tasks` API supports listing/creating tasks, fetching overdue and due-today
+tasks, completing/reopening tasks, and deleting tasks. These independent task records are
+separate from day-plan items.
 
 ## Consistency score
 

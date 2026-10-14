@@ -9,3 +9,4 @@ from app.models.recommendation import Recommendation, RecommendationStatus, Reco
 from app.models.ai_insight import AIInsight
 from app.models.user_theme import UserTheme
 from app.models.day_plan import DayPlan, DayPlanItem
+from app.models.user_task import UserTask
