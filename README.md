@@ -124,6 +124,19 @@ The AI service sends only calculated habit statistics and related non-authentica
 
 If AI is unavailable, habit tracking, statistics and rule-based recommendations continue working.
 
+## Immersive worlds
+
+Run `alembic upgrade head` to create the per-user `user_themes` table before using theme
+persistence. `GET /theme/presets` is public; the remaining `/theme` endpoints require the
+normal bearer access token. They support reading and setting a preset, generating and saving a
+custom world, previewing a custom world without saving it, and saving a validated preview.
+Custom-world generation falls back to a deterministic theme when AI is not configured or
+unavailable.
+
+The protected `POST /ai/chat` endpoint accepts a `messages` array containing user/assistant
+history and returns `reply` plus `source_status`. Companion replies can use the user's saved
+world for tone, while numerical statements are grounded in verified habit and day-plan data.
+
 ## Consistency score
 
 This is an application metric, not a scientifically validated measure:

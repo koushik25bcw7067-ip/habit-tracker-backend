@@ -4,7 +4,9 @@ from sqlalchemy.orm import Session
 from app.database.dependencies import get_db
 from app.routers.users import current_user
 from app.models.ai_insight import AIInsight
+from app.models.user_theme import UserTheme
 from app.services.ai_service import AIService
+from app.services.theme_service import PRESETS, persona_for_prompt
 from app.schemas.ai import AIAnalyzeRequest,NewHabitSuggestionRequest,ChatRequest,ChatResponse
 router=APIRouter(prefix="/ai",tags=["AI"])
 
@@ -30,4 +32,6 @@ def suggest(data:NewHabitSuggestionRequest,user=Depends(current_user),db:Session
 
 @router.post("/chat",response_model=ChatResponse)
 def chat(data:ChatRequest,user=Depends(current_user),db:Session=Depends(get_db)):
-    return AIService(db,user.id).chat(data.messages)
+    row=db.scalar(select(UserTheme).where(UserTheme.user_id==user.id))
+    theme=PRESETS.get(row.preset_key) if row and row.preset_key else (row.data if row else None)
+    return AIService(db,user.id).chat(data.messages,persona=persona_for_prompt(theme))

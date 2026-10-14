@@ -153,7 +153,7 @@ class AIService:
             "source_status": reason,
         }
 
-    def _build_system_prompt(self, context):
+    def _build_system_prompt(self, context, persona=""):
         return (
             "You are a friendly personal AI companion inside a habit "
             "tracking and productivity application. "
@@ -185,11 +185,12 @@ class AIService:
             "Be concise for simple questions and more detailed when "
             "the user asks for an explanation or plan. "
 
-            "VERIFIED USER DATA:\n"
+            + (f"WORLD PERSONA (style only; never changes facts): {persona}\n" if persona else "")
+            + "VERIFIED USER DATA:\n"
             f"{json.dumps(context, default=str)}"
         )
 
-    def chat(self, messages):
+    def chat(self, messages, persona=""):
         context = self.verified_context(30)
 
         if not self.api_key:
@@ -199,7 +200,7 @@ class AIService:
                 "ai_not_configured",
             )
 
-        system_prompt = self._build_system_prompt(context)
+        system_prompt = self._build_system_prompt(context, persona)
 
         formatted_messages = [
             {

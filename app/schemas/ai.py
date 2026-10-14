@@ -1,5 +1,5 @@
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 class AIAnalyzeRequest(BaseModel):
     days: int = Field(default=30, ge=7, le=365)
@@ -10,6 +10,12 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+
+    @model_validator(mode="after")
+    def latest_message_must_be_from_user(self):
+        if self.messages[-1].role != "user":
+            raise ValueError("The latest chat message must be from the user")
+        return self
 
 class ChatResponse(BaseModel):
     reply: str

@@ -7,4 +7,5 @@ from app.models.reminder import Reminder
 from app.models.achievement import Achievement, UserAchievement
 from app.models.recommendation import Recommendation, RecommendationStatus, RecommendationType
 from app.models.ai_insight import AIInsight
+from app.models.user_theme import UserTheme
 from app.models.day_plan import DayPlan, DayPlanItem
