@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -9,9 +10,12 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
-    ai_api_key: str = "your_groq_api_key_here"
-    ai_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-    ai_model: str = "gemini-3.6-flash"
+    ai_api_key: str = ""
+    ai_base_url: str = Field(
+        default="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        validation_alias=AliasChoices("AI_BASE_URL", "AI_API_URL"),
+    )
+    ai_model: str = "gemini-3.8-flash"
 
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")

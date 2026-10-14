@@ -112,13 +112,17 @@ Swagger: `http://127.0.0.1:8000/docs`
 
 AI is optional. The application works without it.
 
-Set:
+For Google Gemini, set the API key from Google AI Studio in the deployment's secret
+environment variables. Never put the key in frontend code or commit it:
 
 ```env
-AI_API_KEY=your_key
-AI_API_URL=https://api.openai.com/v1/chat/completions
-AI_MODEL=gpt-4o-mini
+AI_API_KEY=your_google_ai_studio_key
+AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+AI_MODEL=gemini-3.8-flash
 ```
+
+`AI_API_URL` is also accepted as an alias for `AI_BASE_URL`. If no key is configured, AI
+features report that AI is not configured and use their existing non-AI fallback behavior.
 
 The AI service sends only calculated habit statistics and related non-authentication data. It never receives passwords, JWTs or API keys.
 

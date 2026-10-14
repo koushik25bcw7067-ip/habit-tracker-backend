@@ -36,7 +36,7 @@ class AIService:
         self.model = (
             getattr(settings, "ai_model", "")
             or getattr(settings, "AI_MODEL", "")
-            or "gemini-2.5-flash"
+            or "gemini-3.8-flash"
         ).strip()
 
     def verified_context(self, days=30):
