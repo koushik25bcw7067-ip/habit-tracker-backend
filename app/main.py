@@ -19,6 +19,7 @@ from app.routers import (
     goals,
     theme,
     tasks,
+    companion,
 )
 
 from app.models import (
@@ -34,6 +35,7 @@ from app.models import (
     AIInsight,
     UserTheme,
     UserTask,
+    CompanionDevice,
 )
 
 from app.routers.day_plans import router as day_plans_router
@@ -59,6 +61,13 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=[
+        "X-Companion-Reply",
+        "X-Companion-Transcript",
+        "X-Companion-Status",
+        "X-Companion-Action-Id",
+        "X-Companion-Action-Type",
+    ],
 )
 
 
@@ -79,6 +88,7 @@ for router in [
     goals.router,
     theme.router,
     tasks.router,
+    companion.router,
 ]:
     app.include_router(router)
 

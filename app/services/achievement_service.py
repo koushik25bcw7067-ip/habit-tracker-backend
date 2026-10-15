@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 from app.models.achievement import Achievement, UserAchievement
 from app.models.habit import Habit
 from app.models.completion import HabitCompletion
@@ -13,14 +12,17 @@ DEFAULTS = [
     ("CONSISTENCY_MASTER","Consistency Master","Reach a 90% measured completion rate.",250,"master"),
 ]
 
-def ensure_defaults(db):
+def ensure_defaults(db, commit=True):
     for code,name,desc,xp,badge in DEFAULTS:
         if not db.scalar(select(Achievement).where(Achievement.code==code)):
             db.add(Achievement(code=code,name=name,description=desc,xp=xp,badge=badge))
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
 
-def evaluate(db,user_id):
-    ensure_defaults(db)
+def evaluate(db,user_id, commit=True):
+    ensure_defaults(db, commit=commit)
     habits=db.scalars(select(Habit).where(Habit.user_id==user_id)).all()
     total=db.scalar(select(HabitCompletion.id).join(Habit).where(Habit.user_id==user_id).count()) if False else len(db.scalars(select(HabitCompletion.id).join(Habit).where(Habit.user_id==user_id)).all())
     max_streak=max([streak_data(db,h)["longest_streak"] for h in habits],default=0)
@@ -30,4 +32,7 @@ def evaluate(db,user_id):
         exists=db.scalar(select(UserAchievement).where(UserAchievement.user_id==user_id,UserAchievement.achievement_id==a.id))
         if ok and not exists:
             db.add(UserAchievement(user_id=user_id,achievement_id=a.id,unlocked_at=datetime.now(timezone.utc)))
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()

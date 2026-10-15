@@ -31,3 +31,17 @@ class AIInsightResponse(BaseModel):
     created_at: object
     class Config:
         from_attributes = True
+
+from typing import List, Dict
+
+
+class CustomThemeRequest(BaseModel):
+    theme_name: str
+
+
+class CustomThemeResponse(BaseModel):
+    name: str
+    palette: Dict[str, str]
+    font_family: str
+    dialogues: List[str]
+    doll_emoji: str

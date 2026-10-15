@@ -66,6 +66,14 @@ def test_task_crud_endpoints(client):
     assert client.get("/tasks").json() == [task]
 
     task_id = task["id"]
+    updated = client.put(
+        f"/tasks/{task_id}",
+        json={"title": "Submit the revised assignment", "priority": "medium"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["title"] == "Submit the revised assignment"
+    assert updated.json()["priority"] == "medium"
+
     completed = client.post(f"/tasks/{task_id}/complete")
     assert completed.status_code == 200
     assert completed.json()["status"] == "done"
@@ -77,6 +85,14 @@ def test_task_crud_endpoints(client):
     deleted = client.delete(f"/tasks/{task_id}")
     assert deleted.status_code == 204
     assert client.get("/tasks").json() == []
+
+
+def test_task_updates_are_user_scoped(client):
+    created = client.post("/tasks", json={"title": "Private task"})
+    task_id = created.json()["id"]
+    app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=2)
+
+    assert client.put(f"/tasks/{task_id}", json={"title": "Changed"}).status_code == 404
 
 
 def test_today_tasks_only_returns_pending_overdue_and_due_today(client):

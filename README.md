@@ -23,7 +23,7 @@ The backend is the source of truth for numerical statistics. AI receives verifie
 - Recommendation accept/reject history
 - Optional OpenAI-compatible AI provider
 - AI analysis, weekly/monthly reports and new-habit suggestions
-- User-owned task CRUD with due dates, priorities, completion and reminder flags
+- Authenticated laptop voice commands and a paired-device companion API
 - Swagger/OpenAPI
 - Alembic migrations
 - Seed data and tests
@@ -109,42 +109,27 @@ uvicorn app.main:app --reload
 
 Swagger: `http://127.0.0.1:8000/docs`
 
+## Voice companion
+
+The laptop microphone workflow, supported commands, API contract, migration
+notice, and manual test checklist are documented in
+[docs/voice-companion.md](docs/voice-companion.md).
+
 ## AI configuration
 
 AI is optional. The application works without it.
 
-For Google Gemini, set the API key from Google AI Studio in the deployment's secret
-environment variables. Never put the key in frontend code or commit it:
+Set:
 
 ```env
-AI_API_KEY=your_google_ai_studio_key
-AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
-AI_MODEL=gemini-3.8-flash
+AI_API_KEY=your_key
+AI_API_URL=https://api.openai.com/v1/chat/completions
+AI_MODEL=gpt-4o-mini
 ```
-
-`AI_API_URL` is also accepted as an alias for `AI_BASE_URL`. If no key is configured, AI
-features report that AI is not configured and use their existing non-AI fallback behavior.
 
 The AI service sends only calculated habit statistics and related non-authentication data. It never receives passwords, JWTs or API keys.
 
 If AI is unavailable, habit tracking, statistics and rule-based recommendations continue working.
-
-## Immersive worlds
-
-Run `alembic upgrade head` to create the per-user `user_themes` table before using theme
-persistence. `GET /theme/presets` is public; the remaining `/theme` endpoints require the
-normal bearer access token. They support reading and setting a preset, generating and saving a
-custom world, previewing a custom world without saving it, and saving a validated preview.
-Custom-world generation falls back to a deterministic theme when AI is not configured or
-unavailable.
-
-The protected `POST /ai/chat` endpoint accepts a `messages` array containing user/assistant
-history and returns `reply` plus `source_status`. Companion replies can use the user's saved
-world for tone, while numerical statements are grounded in verified habit and day-plan data.
-
-The protected `/tasks` API supports listing/creating tasks, fetching overdue and due-today
-tasks, completing/reopening tasks, and deleting tasks. These independent task records are
-separate from day-plan items.
 
 ## Consistency score
 

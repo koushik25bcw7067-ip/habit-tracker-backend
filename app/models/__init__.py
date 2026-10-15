@@ -10,3 +10,4 @@ from app.models.ai_insight import AIInsight
 from app.models.user_theme import UserTheme
 from app.models.day_plan import DayPlan, DayPlanItem
 from app.models.user_task import UserTask
+from app.models.companion_device import CompanionDevice
