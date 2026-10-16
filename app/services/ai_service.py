@@ -94,7 +94,7 @@ class AIService:
                 f"{trend} percentage points."
             ],
             "recommendations": [
-                "Focus on completing your top priority habit consistently."
+                "Focus on completing your top priority routine consistently."
             ],
             "source_status": reason,
         }
@@ -132,7 +132,7 @@ class AIService:
             reply = (
                 f"Your completion rate changed by {trend} "
                 f"percentage points compared to the last period. "
-                f"Try reducing your daily load to one core habit "
+                f"Try reducing your daily load to one core routine "
                 f"for the next few days."
             )
         else:
@@ -140,7 +140,7 @@ class AIService:
                 f"Your verified stats show a {completion}% "
                 f"completion rate over the last 30 days, "
                 f"with a top streak of {streak} days. "
-                f"What habit do you want to work on today?"
+                f"What routine do you want to work on today?"
             )
 
         return {
@@ -150,7 +150,7 @@ class AIService:
 
     def _build_system_prompt(self, context, persona=""):
         return (
-            "You are a friendly personal AI companion inside a habit "
+            "You are a friendly personal AI companion inside a routine "
             "tracking and productivity application. "
             "Speak naturally, warmly, and casually. "
             "Do not sound robotic or overly formal. "
@@ -159,14 +159,14 @@ class AIService:
             "Mirror the user's language when appropriate. "
             "For simple greetings and casual conversation, give a "
             "natural conversational response. Do not unnecessarily "
-            "dump habit statistics when the user is simply saying hi. "
+            "dump routine statistics when the user is simply saying hi. "
             "Maintain conversation context and understand follow-up "
             "references such as 'it', 'that', 'why', 'what next', "
             "and 'what after that'. "
-            "When discussing habits, tasks, or statistics, use ONLY "
+            "Call recurring tracked items routines. When discussing routines, tasks, or statistics, use ONLY "
             "the verified data supplied below. "
             "Never invent statistics, streaks, tasks, deadlines, "
-            "habits, calendar events, or other user information. "
+            "routines, calendar events, or other user information. "
             "The backend is the source of truth for numerical data. "
             "Be concise for simple questions and more detailed when "
             "the user asks for an explanation or plan. "
@@ -400,7 +400,7 @@ Requirements:
             )
 
         prompt = (
-            "Analyze these verified habit statistics. "
+            "Analyze these verified routine statistics. "
             "Do not invent numbers. "
             "Return valid JSON with keys: "
             "performance_analysis, strong_habits, weak_habits, "
@@ -414,7 +414,7 @@ Requirements:
                     {
                         "role": "system",
                         "content": (
-                            "You are a habit analytics assistant. "
+                            "You are a routine analytics assistant. "
                             "Return only valid JSON."
                         ),
                     },
@@ -456,7 +456,7 @@ Requirements:
             return fallback_item
 
         prompt = (
-            f"Suggest 3 measurable habits for this goal: "
+            f"Suggest 3 measurable routines for this goal: "
             f"'{goal}'. "
             "Return a clean JSON array of objects with keys: "
             "name, description, frequency, target_value, "
@@ -478,7 +478,7 @@ Requirements:
             result = self._parse_json(text)
 
             if not isinstance(result, list):
-                raise ValueError("Habit suggestions must be a JSON list.")
+                raise ValueError("Routine suggestions must be a JSON list.")
 
             return result
 
@@ -513,7 +513,7 @@ Requirements:
             "patterns": context.get("patterns", []),
             "recommendations": context.get("recommendations", []),
             "next_week_plan": [
-                "Focus on your primary habit.",
+                "Focus on your primary routine.",
                 "Keep daily targets manageable.",
             ],
             "source_status": context.get("source_status", "ai"),

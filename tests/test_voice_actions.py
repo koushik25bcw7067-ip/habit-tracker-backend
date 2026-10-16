@@ -200,7 +200,7 @@ def test_voice_completes_habit_and_weekly_progress_includes_it(
         monkeypatch,
         [{"transcript": "How was my weekly progress?", "intent": "weekly_progress"}],
     )
-    assert "1 habits" in result[0][0]
+    assert "1 routine" in result[0][0]
     assert "100.0 percent" in result[0][0]
 
 

@@ -17,19 +17,19 @@ PRESETS: dict[str, dict] = {
     # ------------------------------------------------------------------ classic (default)
     "classic": {
         "label": "Classic",
-        "description": "The original clean look. A friendly helper, no costume.",
+        "description": "The original clean look, with a cheerful little explorer companion.",
         "mode": "light",
         "colors": _V(primary="#4f46e5", secondary="#674bb5", tertiary="#10b981", background="#f8f9ff", text="#0b1c30"),
         "fonts": _V(display="Plus Jakarta Sans", body="Inter"),
         "effects": _V(texture="none", ambient="none", radius="soft", border="plain", heading_case="none", heading_tracking=-0.02),
-        "mascot": _V(name="Buddy", emoji="✨", accessory="none", outfit="#4f46e5", skin="#fde0c4"),
+        "mascot": _V(name="Mira", emoji="🧭", accessory="cap", outfit="#e8793f", skin="#fde0c4"),
         "vocab": {},
         "lines": {
             "greeting": ["Welcome back, {name}!", "Good to see you, {name}."],
-            "idle": ["Still here, rooting for you.", "One habit at a time."],
+            "idle": ["Still here, rooting for you.", "One routine at a time."],
             "poke": ["Hey! That tickles.", "Need something?"],
             "thinking": ["Let me think about that..."],
-            "habit_created": ["New habit added. Let's make it stick!", "Nice start with {habit}."],
+            "habit_created": ["New routine added. Let's make it stick!", "Nice start with {habit}."],
             "habit_done": ["{habit} done. Nicely done!", "Another one down."],
             "habit_undone": ["No worries, we can redo it."],
             "task_created": ["Task added. One thing at a time.", "Got it: {task}."],

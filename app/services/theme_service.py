@@ -62,8 +62,8 @@ GENERIC_LINES = {
     "idle": ["Still here, rooting for you.", "One step at a time."],
     "poke": ["Hey! That tickles."],
     "thinking": ["Let me think..."],
-    "habit_created": ["New habit added. Let's make it stick!"],
-    "habit_done": ["Habit done. Nicely done!"],
+    "habit_created": ["New routine added. Let's make it stick!"],
+    "habit_done": ["Routine done. Nicely done!"],
     "habit_undone": ["No worries, we can redo it."],
     "task_created": ["Task added."],
     "task_done": ["Task complete!"],
@@ -103,6 +103,18 @@ def _text(v, limit: int) -> str:
     # drop unknown {placeholders} so they can't show up literally in the UI
     s = _PLACEHOLDER.sub(lambda m: m.group(0) if m.group(1) in _ALLOWED_PH else "", s)
     return s[:limit].strip()
+
+
+def _routine_wording(value: str) -> str:
+    def replace(match):
+        word = match.group(0)
+        plural = word.lower().endswith("s")
+        replacement = "routines" if plural else "routine"
+        if word.isupper():
+            return replacement.upper()
+        return replacement.capitalize() if word[0].isupper() else replacement
+
+    return re.sub(r"\bhabits?\b", replace, value, flags=re.I)
 
 
 def _enum(v, allowed: list[str], default: str) -> str:
@@ -149,9 +161,9 @@ def sanitize_theme(raw, query: str | None = None) -> dict:
 
     min_ = raw.get("mascot") if isinstance(raw.get("mascot"), dict) else {}
     mascot = {
-        "name": _text(min_.get("name"), 24) or "Buddy",
-        "emoji": _text(min_.get("emoji"), 4) or "✨",
-        "accessory": _enum(min_.get("accessory"), ACCESSORIES, "none"),
+        "name": _text(min_.get("name"), 24) or "Mira",
+        "emoji": _text(min_.get("emoji"), 4) or "🧭",
+        "accessory": _enum(min_.get("accessory"), ACCESSORIES, "cap"),
         "outfit": _hex(min_.get("outfit")) or colors["primary"],
         "skin": _hex(min_.get("skin")) or "#fde0c4",
     }
@@ -162,22 +174,32 @@ def sanitize_theme(raw, query: str | None = None) -> dict:
         v = _text(vin.get(k), MAX_VOCAB_LEN)
         if v:
             vocab[k] = v
+    vocab.update({
+        "habit": "Routine",
+        "habits": "Routines",
+        "add_habit_prompt": "What routine would you like to build?",
+        "empty_habits": "No routines yet.",
+    })
 
     lin = raw.get("lines") if isinstance(raw.get("lines"), dict) else {}
     lines: dict = {}
     for k in LINE_KEYS:
         arr = lin.get(k)
-        cleaned = [_text(x, MAX_LINE_LEN) for x in arr] if isinstance(arr, list) else []
+        cleaned = [_routine_wording(_text(x, MAX_LINE_LEN)) for x in arr] if isinstance(arr, list) else []
         cleaned = [x for x in cleaned if x][:MAX_LINES]
         lines[k] = cleaned or list(GENERIC_LINES[k])
     pin = lin.get("pages") if isinstance(lin.get("pages"), dict) else {}
-    lines["pages"] = {k: t for k in PAGE_KEYS if (t := _text(pin.get(k), MAX_LINE_LEN))}
+    lines["pages"] = {
+        k: _routine_wording(t)
+        for k in PAGE_KEYS
+        if (t := _text(pin.get(k), MAX_LINE_LEN))
+    }
 
     label = _text(raw.get("label"), 40) or (query or "Custom")[:40]
     out = {
         "schema_version": SCHEMA_VERSION,
         "label": label,
-        "description": _text(raw.get("description"), 160),
+        "description": _routine_wording(_text(raw.get("description"), 160)),
         "mode": "dark" if raw.get("mode") == "dark" else "light",
         "colors": colors,
         "fonts": fonts,
@@ -186,7 +208,7 @@ def sanitize_theme(raw, query: str | None = None) -> dict:
         "vocab": vocab,
         "lines": lines,
     }
-    if raw.get("source") in ("ai", "fallback"):
+    if raw.get("source") in ("ai", "fallback", "curated"):
         out["source"] = raw["source"]
     if query:
         out["query"] = query[:200]
@@ -201,8 +223,8 @@ def upgrade_legacy(raw: dict) -> dict:
     base["colors"]["primary"] = _hex(raw.get("accent_color")) or base["colors"]["primary"]
     base["fonts"]["display"] = raw.get("font") or base["fonts"]["display"]
     base["label"] = raw.get("label") or raw.get("mascot_name") or "Custom"
-    base["mascot"]["name"] = raw.get("mascot_name") or "Buddy"
-    base["mascot"]["emoji"] = raw.get("mascot_emoji") or "✨"
+    base["mascot"]["name"] = raw.get("mascot_name") or "Mira"
+    base["mascot"]["emoji"] = raw.get("mascot_emoji") or "🧭"
     base["mascot"]["outfit"] = base["colors"]["primary"]
     d = raw.get("dialogues")
     if isinstance(d, list) and d:
@@ -243,13 +265,66 @@ def _short_name(query: str) -> str:
     return " ".join(words[:2]).title()[:20] or "Buddy"
 
 
+def _is_attack_on_titan(query: str) -> bool:
+    normalized = normalize_query(query).lower()
+    return bool(re.search(r"\battack\s+(?:on|of)\s+titan\b|\bshingeki\s+no\s+kyojin\b|\baot\b", normalized))
+
+
+def _attack_on_titan_theme(query: str) -> dict:
+    return sanitize_theme({
+        "label": "Attack on Titan",
+        "description": "A dark military expedition world with weathered stone, forest olive, muted crimson and parchment-map details.",
+        "mode": "dark",
+        "colors": {
+            "primary": "#87977A",
+            "secondary": "#9B604E",
+            "tertiary": "#D3A45B",
+            "background": "#191D1B",
+            "text": "#F1EEE5",
+        },
+        "fonts": {"display": "Oswald", "body": "Inter"},
+        "effects": {
+            "texture": "stone",
+            "ambient": "embers",
+            "radius": "sharp",
+            "border": "ornate",
+            "heading_case": "uppercase",
+            "heading_tracking": 0.04,
+        },
+        "mascot": {
+            "name": "Nia",
+            "emoji": "🧭",
+            "accessory": "cap",
+            "outfit": "#87977A",
+            "skin": "#F2D3B3",
+        },
+        "lines": {
+            "greeting": ["Expedition log ready. What's our first step, {name}?"],
+            "idle": ["Keep your bearings. One steady step at a time.", "Your next route is ready to plan."],
+            "poke": ["Scout's attention secured. What's the plan?"],
+            "thinking": ["Checking the map…"],
+            "habit_created": ["Routine added to the expedition plan: {habit}."],
+            "habit_done": ["{habit} complete. The team moves forward."],
+            "habit_undone": ["No setback lasts forever. Reset and try again."],
+            "task_created": ["New mission logged: {task}."],
+            "task_done": ["Mission complete: {task}."],
+            "streak": ["{streak} days of steady progress. Keep formation."],
+            "missed": ["A planned step is still waiting. Regroup when ready."],
+            "milestone": ["A new milestone reached. Well done, scout."],
+            "encourage": ["Take a breath, check your map, and choose one next step."],
+        },
+        "source": "curated",
+    }, query)
+
+
 def fallback_theme(query: str) -> dict:
     q = normalize_query(query) or "Custom"
+    if _is_attack_on_titan(q):
+        return _attack_on_titan_theme(q)
     h = int(hashlib.sha256(q.lower().encode()).hexdigest()[:8], 16)
     hue = h % 360
     dark = (h >> 9) % 3 == 0
     name = _short_name(q)
-    acc = [a for a in ACCESSORIES if a != "none"]
     displays = ["Fredoka", "Oswald", "Cinzel", "Orbitron", "Quicksand", "Baloo 2", "Poppins", "Space Grotesk"]
     bodies = ["Nunito", "Inter", "Lora", "Rajdhani", "Poppins"]
     f = lambda arr: [x.replace("{theme}", name) for x in arr]  # noqa: E731
@@ -267,7 +342,7 @@ def fallback_theme(query: str) -> dict:
         "fonts": {"display": displays[(h >> 3) % len(displays)], "body": bodies[(h >> 6) % len(bodies)]},
         "effects": {"texture": TEXTURES[(h >> 4) % len(TEXTURES)], "ambient": AMBIENTS[(h >> 8) % len(AMBIENTS)],
                     "radius": "soft", "border": "plain", "heading_case": "none", "heading_tracking": 0},
-        "mascot": {"name": "Buddy", "emoji": "✨", "accessory": acc[(h >> 12) % len(acc)],
+        "mascot": {"name": "Mira", "emoji": "🧭", "accessory": "cap",
                    "outfit": _hsl_to_hex(hue, 70, 50), "skin": "#fde0c4"},
         "vocab": {},
         "lines": {
@@ -297,6 +372,14 @@ SYSTEM_PROMPT = (
 
 
 def _build_prompt(query: str) -> str:
+    specific_direction = ""
+    if _is_attack_on_titan(query):
+        specific_direction = """
+Specific direction for this request:
+- Make the visual identity clearly read as Attack on Titan-inspired military expedition, not generic fantasy, anime pastels, or cyberpunk.
+- Use a dark charcoal and weathered-stone base, forest olive and muted burgundy accents, warm parchment/map details, and disciplined field-journal typography.
+- Keep the UI readable and usable. The companion and all dialogue must remain original; do not use characters, logos, symbols, copied artwork, or quotations.
+"""
     return f"""World description (data, quoted): {json.dumps(query)}
 
 Return JSON with exactly these keys:
@@ -307,15 +390,19 @@ Return JSON with exactly these keys:
  "colors": {{"primary":"#rrggbb","secondary":"#rrggbb","tertiary":"#rrggbb (used for 'done/success' states)","background":"#rrggbb","text":"#rrggbb"}},
  "fonts": {{"display": one of {json.dumps(DISPLAY_FONTS)}, "body": one of {json.dumps(BODY_FONTS)}}},
  "effects": {{"texture": one of {TEXTURES}, "ambient": one of {AMBIENTS}, "radius": one of {RADII}, "border": one of {BORDERS}, "heading_case": one of {HEADING_CASES}, "heading_tracking": number between -0.02 and 0.1}},
- "mascot": {{"name":"original companion name","emoji":"one emoji","accessory": one of {ACCESSORIES}, "outfit":"#rrggbb","skin":"#rrggbb"}},
- "vocab": {{ keys among {VOCAB_KEYS}: short UI wording for this world, e.g. habit->"Spell". Keep each understandable; 'greeting' may use {{name}} }},
+ "mascot": {{"name":"Mira","emoji":"🧭","accessory":"cap","outfit":"#rrggbb","skin":"#rrggbb"}},
+ "vocab": {{ keys among {VOCAB_KEYS}: short UI wording for this world; use "Routine" and "Routines" for recurring activities. Keep each understandable; 'greeting' may use {{name}} }},
  "lines": {{ for each of {LINE_KEYS}: an array of 2-3 short lines (max 90 chars), plus "pages": {{ some of {PAGE_KEYS}: one short line each }} }}
 }}
+
+{specific_direction}
 
 Rules:
 - Colours must evoke the world and keep strong text/background contrast.
 - The companion is ORIGINAL. Never reproduce a copyrighted character's artwork, name, logo or real dialogue.
   Capture the world's rhythm, attitude and vocabulary with brand-new lines.
+- Keep the companion an original, cheerful young explorer girl with expressive features; theme her colours and small accessories without copying an existing character.
+- Use "routine" and "routines" for the tracked recurring activity in labels and dialogue; one-off work stays a task.
 - Lines are playful and contextual. Placeholders allowed: {{name}}, {{habit}}, {{task}}, {{count}}, {{streak}}.
   habit_* lines may use {{habit}}; task_* lines {{task}}; streak lines {{streak}}.
 - Language: English unless the description asks for another style (e.g. "in Tenglish"). Keep functional wording clear.
@@ -341,6 +428,13 @@ def generate_custom(query: str) -> dict:
     """Public (v1+v2) theme for a description. Never raises; same description -> same theme (cached)."""
     q = normalize_query(query)
     key = q.lower()
+    if _is_attack_on_titan(q):
+        curated = to_public(_attack_on_titan_theme(q))
+        with _lock:
+            _cache[key] = curated
+            while len(_cache) > 200:
+                _cache.popitem(last=False)
+        return copy.deepcopy(curated)
     with _lock:
         if key in _cache:
             _cache.move_to_end(key)

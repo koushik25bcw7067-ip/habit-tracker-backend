@@ -255,17 +255,17 @@ def prepare_action(
 
     if intent.intent == "complete_habit":
         if intent.target_id is None:
-            return None, "Which habit do you mean? Please say its name."
+            return None, "Which routine do you mean? Please say its name."
         try:
             habit = get_owned_habit(db, user_id, intent.target_id)
         except HTTPException as error:
             if error.status_code == 404:
-                return None, "I couldn't find that habit in your account."
+                return None, "I couldn't find that routine in your account."
             raise
         if not habit.active or habit.archived:
-            return None, "That habit is not active."
+            return None, "That routine is not active."
         if not scheduled_on(habit, date.today()):
-            return None, "That habit is not scheduled for today."
+            return None, "That routine is not scheduled for today."
         completed = db.scalar(
             select(HabitCompletion).where(
                 HabitCompletion.habit_id == habit.id,
@@ -276,15 +276,15 @@ def prepare_action(
             return None, f"“{habit.name}” is already complete for today."
         return (
             {"type": "complete_habit", "habit_id": habit.id},
-            f"Should I mark “{habit.name}” complete for today?",
+            f"Should I mark routine “{habit.name}” complete for today?",
         )
 
     if intent.intent == "create_habit":
         name = (intent.title or "").strip()
         if not name:
-            return None, "What should I name the habit?"
+            return None, "What should I name the routine?"
         if len(name) > 120:
-            return None, "Habit names can be at most 120 characters."
+            return None, "Routine names can be at most 120 characters."
         if intent.frequency == "custom" and not intent.target_days:
             return None, "Which weekdays should I schedule it for?"
         action = {
@@ -300,24 +300,24 @@ def prepare_action(
             "target_value": intent.target_value,
             "unit": intent.unit,
         }
-        return action, f"Should I create the habit “{name}”?"
+        return action, f"Should I create the routine “{name}”?"
 
     if intent.intent == "update_habit":
         if intent.target_id is None:
-            return None, "Which habit do you mean? Please say its name."
+            return None, "Which routine do you mean? Please say its name."
         try:
             habit = get_owned_habit(db, user_id, intent.target_id)
         except HTTPException as error:
             if error.status_code == 404:
-                return None, "I couldn't find that habit in your account."
+                return None, "I couldn't find that routine in your account."
             raise
         updates = {}
         if intent.title is not None:
             name = intent.title.strip()
             if not name:
-                return None, "A habit name cannot be blank."
+                return None, "A routine name cannot be blank."
             if len(name) > 120:
-                return None, "Habit names can be at most 120 characters."
+                return None, "Routine names can be at most 120 characters."
             updates["name"] = name
         for field in (
             "description",
@@ -334,13 +334,13 @@ def prepare_action(
             if value is not None:
                 updates[field] = value.isoformat() if isinstance(value, date) else value
         if not updates:
-            return None, "What would you like me to change about that habit?"
+            return None, "What would you like me to change about that routine?"
         return (
             {"type": "update_habit", "habit_id": habit.id, "updates": updates},
-            f"Should I update the habit “{habit.name}”?",
+            f"Should I update the routine “{habit.name}”?",
         )
 
-    return None, "I can help with tasks and habits. What would you like to do?"
+    return None, "I can help with tasks and routines. What would you like to do?"
 
 
 def store_pending_action(
@@ -417,7 +417,7 @@ def execute_pending_action(
             ),
             commit=False,
         )
-        reply = f"Done. I marked “{habit.name}” complete for today."
+        reply = f"Done. I marked routine “{habit.name}” complete for today."
     elif action_type == "create_habit":
         data = HabitCreate.model_validate(
             {
@@ -434,7 +434,7 @@ def execute_pending_action(
             }
         )
         habit = create_habit(db, user_id, data, commit=False)
-        reply = f"Created habit: {habit.name}."
+        reply = f"Created routine: {habit.name}."
     elif action_type == "update_habit":
         habit = get_owned_habit(db, user_id, action["habit_id"])
         updates = action.get("updates", {})
@@ -442,7 +442,7 @@ def execute_pending_action(
         updated = update_habit(
             db, user_id, habit.id, data, commit=False
         )
-        reply = f"Updated habit: {updated.name}."
+        reply = f"Updated routine: {updated.name}."
     else:
         raise HTTPException(status_code=409, detail="Pending action is invalid")
 

@@ -15,14 +15,14 @@ def generate_habit_recommendations(db: Session, user_id: int, habit: Habit):
         return recs
     if s["completion_rate"] >= 90:
         recs.append(_rec(db, user_id, habit, RecommendationType.TARGET_ADJUSTMENT, "LOW", "MEDIUM",
-            "Your habit may be ready for a slightly higher target",
+            "Your routine may be ready for a slightly higher target",
             f"{habit.name} is at {s['completion_rate']}% completion over the measured period.",
             "A small target increase may provide additional challenge.", "Consider increasing the target slightly."))
     elif s["completion_rate"] < 40:
         recs.append(_rec(db, user_id, habit, RecommendationType.HABIT_SIMPLIFICATION, "HIGH", "HIGH",
-            "Simplify this habit",
+            "Simplify this routine",
             f"{habit.name} is at {s['completion_rate']}% completion.",
-            "A smaller target may be easier to maintain.", "Consider reducing the target or splitting the habit into smaller steps."))
+            "A smaller target may be easier to maintain.", "Consider reducing the target or splitting the routine into smaller steps."))
     if s["current_streak"] == 0 and s["longest_streak"] >= 7:
         recs.append(_rec(db, user_id, habit, RecommendationType.HABIT_RECOVERY, "MEDIUM", "HIGH",
             "Restart normally",
@@ -41,10 +41,10 @@ def generate_all(db, user_id):
     old = period_statistics(db,user_id,old_start,date.today()-timedelta(days=14))
     if len(habits) >= 2 and recent["completion_rate"] + 10 < old["completion_rate"]:
         out.append(_rec(db,user_id,None,RecommendationType.HABIT_OVERLOAD,"MEDIUM","MEDIUM",
-            "Your active habit load may be affecting consistency",
-            f"You have {len(habits)} active habits and completion fell from {old['completion_rate']}% to {recent['completion_rate']}%.",
-            "Focusing on high-priority habits may improve consistency.",
-            "Review your highest-priority habits before adding more."))
+            "Your active routine load may be affecting consistency",
+            f"You have {len(habits)} active routines and completion fell from {old['completion_rate']}% to {recent['completion_rate']}%.",
+            "Focusing on high-priority routines may improve consistency.",
+            "Review your highest-priority routines before adding more."))
     return out
 
 def _rec(db,user_id,habit,rtype,priority,confidence,title,reason,benefit,action):
@@ -63,7 +63,7 @@ def best_time(db, habit):
 def weekly_plan(db,user_id):
     stats=period_statistics(db,user_id,date.today()-timedelta(days=6),date.today())
     return {"overall_rate":stats["completion_rate"],"focus":stats["best_habit"],"improvement":stats["worst_habit"],
-            "plan":["Protect time for the highest-priority habit.","Keep targets unchanged unless data supports an adjustment.","Review missed days at the end of the week."]}
+            "plan":["Protect time for the highest-priority routine.","Keep targets unchanged unless data supports an adjustment.","Review missed days at the end of the week."]}
 
 def _to_dict(r): return {"id":r.id,"habit_id":r.habit_id,"type":r.type,"priority":r.priority,"confidence":r.confidence,
 "title":r.title,"reason":r.reason,"expected_benefit":r.expected_benefit,"action":r.action,"status":r.status}

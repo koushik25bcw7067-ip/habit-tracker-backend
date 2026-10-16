@@ -2,16 +2,19 @@
 
 ## Phase 1: laptop workflow
 
-The existing AI Companion page records audio only after the user presses
-**Record voice command**. Press **Stop recording** to submit it; recordings
+The AI Companion page and the floating companion panel available across the
+signed-in website record audio only after the user presses **Record voice
+command** or **Talk to me**. Press **Stop recording** to submit it; recordings
 stop automatically at 15 seconds. The browser converts the recording to mono,
-16-bit PCM WAV at 16 kHz. The backend performs speech recognition and intent
+16-bit PCM WAV at 16 kHz, with microphone noise reduction enabled where
+supported. The backend performs speech recognition and intent
 interpretation with the configured server-side Gemini integration. Provider
 credentials are never sent to the browser.
 
 Use a secure browser origin for microphone access: `http://localhost` during
-local development or HTTPS for a deployed frontend. Sign in first, start the
-FastAPI backend, and open the existing **AI Companion** page. The frontend API
+local development or HTTPS for a deployed frontend. Sign in first and start
+the FastAPI backend. The floating companion can be opened from any signed-in
+page, or use the full **AI Companion** page. The frontend API
 base is selected through `VITE_API_BASE_URL`; do not put provider credentials
 in a frontend variable.
 
@@ -54,8 +57,8 @@ is requested if a task or habit cannot be uniquely identified.
 Supported voice intents:
 
 - Create, update, complete, or delete a task
-- Create, update, or complete a habit
-- Read tasks or active habits
+- Create, update, or complete a recurring routine (stored using the existing habit data model)
+- Read tasks or active routines
 - Read the existing seven-day progress summary
 - Ask a conversational question through the existing AI service
 
@@ -103,13 +106,13 @@ synthesis is unavailable, the laptop UI uses browser speech as a fallback.
 2. Allow microphone permission, record a short read-only request such as
    "What are my tasks?", stop recording, and check the transcript and
    spoken reply.
-3. Ask for active habits and weekly progress; verify the answers against the
-   existing Habits and Statistics pages.
+3. Ask for active routines and weekly progress; verify the answers against the
+   existing Routines and Statistics pages.
 4. Say "Create a task to review notes tomorrow." Confirm the proposed title
    and deadline, then say yes. Verify the new task in the Tasks page.
 5. Ask to move that task's deadline. Confirm, then verify the changed date on
    the Tasks page and, when applicable, the Dashboard.
-6. Ask to complete a habit scheduled for today. Confirm, then verify the
+6. Ask to complete a routine scheduled for today. Confirm, then verify the
    completion and weekly progress in the website.
 7. Ask to delete a test task. Say no first and verify it remains; repeat and
    say yes to verify it is removed.

@@ -211,7 +211,7 @@ def _intent_prompt(context: dict, pending_action: dict | None, expires_at) -> st
             "For anything else set intent=unclear; do not replace the pending action."
         )
     return (
-        "Interpret the attached short voice recording for a habit-tracker assistant. "
+        "Interpret the attached short voice recording for a routine-tracking assistant. "
         "Return only a JSON object with keys transcript, intent, target_id, title, "
         "description, due_date, priority, frequency, target_days, start_date, "
         "end_date, category_id, target_value, unit. Supported intents: chat, "
@@ -226,7 +226,7 @@ def _intent_prompt(context: dict, pending_action: dict | None, expires_at) -> st
         "frequency unless the user clearly asks for a different schedule; for "
         "custom frequency provide weekday numbers with Monday=0 and Sunday=6. "
         "For habit updates use only fields explicitly requested. If the user asks "
-        "to see or hear their tasks, habits, or weekly progress, use the matching "
+        "to see or hear their tasks, routines (also called habits), or weekly progress, use the matching "
         "read-only intent. If the user speaks Telugu or "
         "mixed Telugu-English, understand it and preserve the natural language in "
         "transcript. If uncertain, use unclear. "
@@ -345,9 +345,9 @@ def process_voice_turn(
     elif intent.intent == "list_habits":
         habits = context["habits"]
         if not habits:
-            reply = "You have no active habits."
+            reply = "You have no active routines."
         else:
-            reply = "Your active habits are: " + ", ".join(
+            reply = "Your active routines are: " + ", ".join(
                 habit["name"] for habit in habits[:5]
             ) + "."
             remaining = len(habits) - min(len(habits), 5)
@@ -360,8 +360,10 @@ def process_voice_turn(
         weekly = period_statistics(
             db, device.user_id, end_date - timedelta(days=6), end_date
         )
+        routine_count = weekly["total_completions"]
+        routine_label = "routine" if routine_count == 1 else "routines"
         reply = (
-            f"This week, you completed {weekly['total_completions']} habits "
+            f"This week, you completed {routine_count} {routine_label} "
             f"with a {weekly['completion_rate']} percent completion rate."
         )
         status_text = "replied"

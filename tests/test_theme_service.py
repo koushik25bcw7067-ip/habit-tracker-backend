@@ -37,9 +37,10 @@ def test_sanitize_blocks_injection_unknown_fonts_and_urls():
     raw["vocab"]["habit"] = "javascript:alert(1)"
     t = ts.sanitize_theme(raw)
     assert t["fonts"] == {"display": "Plus Jakarta Sans", "body": "Inter"}
-    assert t["mascot"]["accessory"] == "none" and "<" not in t["mascot"]["name"]
+    assert t["mascot"]["accessory"] == "cap" and "<" not in t["mascot"]["name"]
     assert t["effects"]["texture"] == "none"
-    assert "habit" not in t["vocab"]
+    assert t["vocab"]["habit"] == "Routine"
+    assert "javascript:" not in t["vocab"]["habit"]
     assert all("http" not in l and "<" not in l and "{bogus}" not in l and len(l) <= ts.MAX_LINE_LEN for l in t["lines"]["idle"])
     assert any("{name}" in l for l in t["lines"]["idle"])
 
@@ -61,8 +62,39 @@ def test_legacy_v1_theme_upgrades():
 def test_fallback_deterministic_valid_and_public_shape():
     a, b = ts.fallback_theme("A peaceful celestial world"), ts.fallback_theme("a peaceful celestial world ")
     assert a["colors"] == b["colors"] and a["source"] == "fallback"
+    assert a["mascot"]["name"] == "Mira" and a["mascot"]["accessory"] == "cap"
     ts.sanitize_theme(a)
     assert ts.fallback_theme("Matrix")["colors"] != a["colors"]
+
+
+def test_attack_on_titan_customization_uses_a_specific_curated_world(monkeypatch):
+    monkeypatch.setattr(ts.settings, "ai_api_key", "configured")
+    ts._cache.clear()
+
+    theme = ts.generate_custom("Attack on Titan")
+
+    assert theme["source"] == "curated"
+    assert theme["label"] == "Attack on Titan"
+    assert theme["mode"] == "dark"
+    assert theme["colors"]["background"] == "#191d1b"
+    assert theme["fonts"]["display"] == "Oswald"
+    assert theme["vocab"]["habit"] == "Routine"
+    assert "routine" in theme["lines"]["habit_created"][0].lower()
+    assert ts.generate_custom("Attack of Titan")["colors"] == theme["colors"]
+    assert ts.generate_custom("Shingeki no Kyojin")["colors"] == theme["colors"]
+
+
+def test_theme_wording_uses_routines_without_changing_private_data_keys():
+    raw = json.loads(json.dumps(RAW["classic"]))
+    raw["vocab"]["habit"] = "Spell"
+    raw["vocab"]["habits"] = "Spells"
+    raw["lines"]["habit_done"] = ["Habit done!"]
+
+    theme = ts.sanitize_theme(raw)
+
+    assert theme["vocab"]["habit"] == "Routine"
+    assert theme["vocab"]["habits"] == "Routines"
+    assert theme["lines"]["habit_done"] == ["Routine done!"]
 
 
 def test_generate_without_key_uses_fallback_and_caches(monkeypatch):
