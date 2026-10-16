@@ -17,7 +17,7 @@ def test_ai_api_url_is_accepted_as_legacy_base_url_alias():
     assert settings.ai_base_url == "https://example.test/v1/chat/completions"
 
 
-def test_whisper_key_is_optional_and_accepts_environment_name():
-    assert Settings(_env_file=None).openai_api_key == ""
-    settings = Settings(_env_file=None, OPENAI_API_KEY="test-key")
-    assert settings.openai_api_key == "test-key"
+def test_gemini_api_key_is_optional_and_accepts_environment_name():
+    assert Settings(_env_file=None).ai_api_key == ""
+    settings = Settings(_env_file=None, AI_API_KEY="gemini-test-key")
+    assert settings.ai_api_key == "gemini-test-key"

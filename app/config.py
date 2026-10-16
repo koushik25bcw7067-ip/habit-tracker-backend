@@ -11,7 +11,6 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 30
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
     ai_api_key: str = ""
-    openai_api_key: str = ""
     ai_base_url: str = Field(
         default="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         validation_alias=AliasChoices("AI_BASE_URL", "AI_API_URL"),

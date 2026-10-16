@@ -96,8 +96,12 @@ def voice_client(monkeypatch):
 
 def run_intents(testing_session, device_id, monkeypatch, intents):
     results = iter(intents)
+    transcripts = iter(intent["transcript"] for intent in intents)
     monkeypatch.setattr(
-        voice_service, "_gemini_json", lambda _audio, _prompt: next(results)
+        voice_service, "_gemini_transcribe", lambda _audio: next(transcripts)
+    )
+    monkeypatch.setattr(
+        voice_service, "_gemini_text_json", lambda _transcript, _prompt: next(results)
     )
     replies = []
     for _ in intents:
@@ -290,18 +294,21 @@ def test_laptop_voice_endpoint_requires_authenticated_session_and_returns_transc
     voice_client, monkeypatch
 ):
     client, testing_session, _ = voice_client
-    intents = iter(
-        [
-            {
-                "transcript": "Create a task to review notes",
-                "intent": "create_task",
-                "title": "Review notes",
-            },
-            {"transcript": "Yes please", "intent": "confirm"},
-        ]
+    intent_results = [
+        {
+            "transcript": "Create a task to review notes",
+            "intent": "create_task",
+            "title": "Review notes",
+        },
+        {"transcript": "Yes please", "intent": "confirm"},
+    ]
+    intents = iter(intent_results)
+    transcripts = iter(intent["transcript"] for intent in intent_results)
+    monkeypatch.setattr(
+        voice_service, "_gemini_transcribe", lambda _audio: next(transcripts)
     )
     monkeypatch.setattr(
-        voice_service, "_gemini_json", lambda _audio, _prompt: next(intents)
+        voice_service, "_gemini_text_json", lambda _transcript, _prompt: next(intents)
     )
     session_id = secrets.token_urlsafe(32)
     headers = {"X-Voice-Session": session_id, "Content-Type": "audio/wav"}

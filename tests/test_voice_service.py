@@ -55,8 +55,9 @@ def test_validate_wav_rejects_audio_longer_than_limit():
     assert error.value.status_code == 422
 
 
-def test_whisper_transcription_sends_wav_and_returns_verbatim_text(monkeypatch):
-    monkeypatch.setattr(voice_service.settings, "openai_api_key", "test-key")
+def test_gemini_transcription_sends_audio_and_preserves_telugu_text(monkeypatch):
+    monkeypatch.setattr(voice_service.settings, "ai_api_key", "gemini-test-key")
+    monkeypatch.setattr(voice_service.settings, "ai_model", "gemini-test-model")
     captured = {}
 
     class Response:
@@ -65,7 +66,11 @@ def test_whisper_transcription_sends_wav_and_returns_verbatim_text(monkeypatch):
 
         @staticmethod
         def json():
-            return {"text": "నా routines complete చెయ్యి"}
+            return {
+                "candidates": [
+                    {"content": {"parts": [{"text": "నా routines complete చెయ్యి"}]}}
+                ]
+            }
 
     def fake_post(url, **kwargs):
         captured["url"] = url
@@ -74,29 +79,30 @@ def test_whisper_transcription_sends_wav_and_returns_verbatim_text(monkeypatch):
 
     monkeypatch.setattr(voice_service.httpx, "post", fake_post)
 
-    transcript = voice_service._transcribe_whisper(make_wav())
+    transcript = voice_service._gemini_transcribe(make_wav())
 
     assert transcript == "నా routines complete చెయ్యి"
-    assert captured["url"] == "https://api.openai.com/v1/audio/transcriptions"
-    assert captured["headers"] == {"Authorization": "Bearer test-key"}
-    assert captured["data"]["model"] == "whisper-1"
-    assert captured["files"]["file"][0] == "voice.wav"
-    assert captured["files"]["file"][2] == "audio/wav"
+    assert captured["url"].endswith("/models/gemini-test-model:generateContent")
+    assert captured["headers"] == {"x-goog-api-key": "gemini-test-key"}
+    parts = captured["json"]["contents"][0]["parts"]
+    assert "Telugu script" in parts[0]["text"]
+    assert parts[1]["inline_data"]["mime_type"] == "audio/wav"
+    assert captured["json"]["generationConfig"]["temperature"] == 0
 
 
-def test_whisper_transcription_requires_server_key(monkeypatch):
-    monkeypatch.setattr(voice_service.settings, "openai_api_key", "")
+def test_gemini_transcription_requires_existing_gemini_key(monkeypatch):
+    monkeypatch.setattr(voice_service.settings, "ai_api_key", "")
 
     with pytest.raises(HTTPException) as error:
-        voice_service._transcribe_whisper(make_wav())
+        voice_service._gemini_transcribe(make_wav())
 
     assert error.value.status_code == 503
 
 
-def test_whisper_transcription_surfaces_provider_failures(monkeypatch):
+def test_gemini_transcription_surfaces_provider_failures(monkeypatch):
     import httpx
 
-    monkeypatch.setattr(voice_service.settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(voice_service.settings, "ai_api_key", "gemini-test-key")
 
     def fail_request(*_args, **_kwargs):
         raise httpx.ConnectError("provider unavailable")
@@ -104,9 +110,30 @@ def test_whisper_transcription_surfaces_provider_failures(monkeypatch):
     monkeypatch.setattr(voice_service.httpx, "post", fail_request)
 
     with pytest.raises(HTTPException) as error:
-        voice_service._transcribe_whisper(make_wav())
+        voice_service._gemini_transcribe(make_wav())
 
     assert error.value.status_code == 502
+
+
+def test_gemini_transcription_rejects_blank_audio_result(monkeypatch):
+    monkeypatch.setattr(voice_service.settings, "ai_api_key", "gemini-test-key")
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        @staticmethod
+        def json():
+            return {"candidates": [{"content": {"parts": [{"text": "  "}]}}]}
+
+    monkeypatch.setattr(
+        voice_service.httpx, "post", lambda *_args, **_kwargs: Response()
+    )
+
+    with pytest.raises(HTTPException) as error:
+        voice_service._gemini_transcribe(make_wav())
+
+    assert error.value.status_code == 422
 
 
 @pytest.mark.parametrize(
@@ -180,11 +207,8 @@ def test_task_write_waits_for_clear_confirmation(monkeypatch):
             ]
         )
         monkeypatch.setattr(
-            voice_service.settings, "openai_api_key", "test-key"
-        )
-        monkeypatch.setattr(
             voice_service,
-            "_transcribe_whisper",
+            "_gemini_transcribe",
             lambda _audio: next(transcripts),
         )
         monkeypatch.setattr(
@@ -192,7 +216,7 @@ def test_task_write_waits_for_clear_confirmation(monkeypatch):
             "_gemini_text_json",
             lambda _transcript, _prompt: {
                 **next(intents),
-                "transcript": "Gemini-generated transcript must not replace Whisper",
+                "transcript": "Intent model output must not replace exact transcription",
             },
         )
         reply, status_text, action_id, transcript = voice_service.process_voice_turn(
