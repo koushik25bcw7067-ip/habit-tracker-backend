@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.models.habit import Habit, Frequency, Priority
 from app.models.completion import HabitCompletion
-from app.models.recommendation import Recommendation, RecommendationType
+from app.models.recommendation import Recommendation, RecommendationStatus, RecommendationType
 from app.services.statistics_service import habit_statistics, period_statistics
 from app.utils.helpers import scheduled_on
 
@@ -48,9 +48,42 @@ def generate_all(db, user_id):
     return out
 
 def _rec(db,user_id,habit,rtype,priority,confidence,title,reason,benefit,action):
-    r=Recommendation(user_id=user_id,habit_id=habit.id if habit else None,type=rtype,priority=priority,
-                     confidence=confidence,title=title,reason=reason,expected_benefit=benefit,action=action)
-    db.add(r); db.commit(); db.refresh(r); return r
+    query = select(Recommendation).where(
+        Recommendation.user_id == user_id,
+        Recommendation.type == rtype,
+    )
+    if habit is None:
+        query = query.where(Recommendation.habit_id.is_(None))
+    else:
+        query = query.where(Recommendation.habit_id == habit.id)
+    existing = db.scalar(query.order_by(Recommendation.created_at.desc()).limit(1))
+    if existing:
+        if existing.status == RecommendationStatus.PENDING:
+            existing.priority = priority
+            existing.confidence = confidence
+            existing.title = title
+            existing.reason = reason
+            existing.expected_benefit = benefit
+            existing.action = action
+            db.commit()
+            db.refresh(existing)
+        return existing
+
+    recommendation = Recommendation(
+        user_id=user_id,
+        habit_id=habit.id if habit else None,
+        type=rtype,
+        priority=priority,
+        confidence=confidence,
+        title=title,
+        reason=reason,
+        expected_benefit=benefit,
+        action=action,
+    )
+    db.add(recommendation)
+    db.commit()
+    db.refresh(recommendation)
+    return recommendation
 
 def best_time(db, habit):
     rows=db.scalars(select(HabitCompletion).where(HabitCompletion.habit_id==habit.id).order_by(HabitCompletion.completion_date)).all()
