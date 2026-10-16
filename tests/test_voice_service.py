@@ -113,6 +113,61 @@ def test_gemini_transcription_surfaces_provider_failures(monkeypatch):
         voice_service._gemini_transcribe(make_wav())
 
     assert error.value.status_code == 502
+    assert "Could not reach Gemini" in error.value.detail
+
+
+def test_gemini_transcription_exposes_provider_http_error(monkeypatch):
+    import httpx
+
+    monkeypatch.setattr(voice_service.settings, "ai_api_key", "gemini-test-key")
+    request = httpx.Request(
+        "POST", "https://generativelanguage.googleapis.com/v1beta/test"
+    )
+    response = httpx.Response(
+        404,
+        request=request,
+        json={"error": {"message": "Model not found: gemini-test-model"}},
+    )
+
+    monkeypatch.setattr(
+        voice_service.httpx,
+        "post",
+        lambda *_args, **_kwargs: response.raise_for_status(),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        voice_service._gemini_transcribe(make_wav())
+
+    assert error.value.status_code == 502
+    assert error.value.detail == (
+        "Gemini transcription failed (HTTP 404): Model not found: gemini-test-model"
+    )
+
+
+def test_gemini_transcription_limits_provider_error_text(monkeypatch):
+    import httpx
+
+    monkeypatch.setattr(voice_service.settings, "ai_api_key", "gemini-test-key")
+    request = httpx.Request(
+        "POST", "https://generativelanguage.googleapis.com/v1beta/test"
+    )
+    response = httpx.Response(
+        429,
+        request=request,
+        json={"error": {"message": "quota exceeded " + "x" * 500}},
+    )
+
+    monkeypatch.setattr(
+        voice_service.httpx,
+        "post",
+        lambda *_args, **_kwargs: response.raise_for_status(),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        voice_service._gemini_transcribe(make_wav())
+
+    assert error.value.status_code == 502
+    assert len(error.value.detail) < 400
 
 
 def test_gemini_transcription_rejects_blank_audio_result(monkeypatch):

@@ -105,6 +105,18 @@ def _api_key() -> str:
     return key
 
 
+def _provider_error_message(error: httpx.HTTPStatusError) -> str:
+    try:
+        body = error.response.json()
+    except ValueError:
+        return "Gemini returned an HTTP error without a readable error message"
+    provider_error = body.get("error") if isinstance(body, dict) else None
+    message = provider_error.get("message") if isinstance(provider_error, dict) else None
+    if not isinstance(message, str) or not message.strip():
+        return "Gemini returned an HTTP error without a readable error message"
+    return " ".join(message.split())[:300]
+
+
 def _gemini_transcribe(audio: bytes) -> str:
     model = getattr(settings, "ai_model", "gemini-3.8-flash")
     endpoint = (
@@ -154,10 +166,27 @@ def _gemini_transcribe(audio: bytes) -> str:
         return transcript
     except HTTPException:
         raise
-    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as error:
-        logger.warning("Gemini audio transcription failed: %s", type(error).__name__)
+    except httpx.HTTPStatusError as error:
+        provider_message = _provider_error_message(error)
+        logger.warning(
+            "Gemini audio transcription rejected (status=%s): %s",
+            error.response.status_code,
+            provider_message,
+        )
         raise HTTPException(
-            status_code=502, detail="Gemini could not transcribe that recording"
+            status_code=502,
+            detail=(
+                f"Gemini transcription failed (HTTP {error.response.status_code}): "
+                f"{provider_message}"
+            ),
+        ) from error
+    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as error:
+        logger.warning(
+            "Gemini audio transcription failed: %s", type(error).__name__
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Could not reach Gemini to transcribe that recording. Try again shortly.",
         ) from error
 
 
