@@ -39,7 +39,7 @@ class CompanionDeviceResponse(BaseModel):
 
 
 class VoiceIntent(BaseModel):
-    transcript: str = Field(min_length=1, max_length=256)
+    transcript: str = Field(min_length=1, max_length=1000)
     intent: Literal[
         "chat",
         "create_task",

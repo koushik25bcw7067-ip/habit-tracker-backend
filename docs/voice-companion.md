@@ -7,9 +7,11 @@ signed-in website record audio only after the user presses **Record voice
 command** or **Talk to me**. Press **Stop recording** to submit it; recordings
 stop automatically at 15 seconds. The browser converts the recording to mono,
 16-bit PCM WAV at 16 kHz, with microphone noise reduction enabled where
-supported. The backend performs speech recognition and intent
-interpretation with the configured server-side Gemini integration. Provider
-credentials are never sent to the browser.
+supported. When `OPENAI_API_KEY` is set on the backend, the recording is sent
+to OpenAI Whisper for transcription, and Gemini interprets the transcript and
+selects an intent. Without that key, the backend logs a warning and uses the
+legacy Gemini audio transcription path. Provider credentials are never sent
+to the browser.
 
 Use a secure browser origin for microphone access: `http://localhost` during
 local development or HTTPS for a deployed frontend. Sign in first and start
@@ -95,10 +97,11 @@ migration against the existing PostgreSQL database until its current Alembic
 revision and backup have been checked and migration approval is given. No
 migration or deployment is performed by this implementation.
 
-Voice recognition and server-side speech synthesis require the corresponding
-Gemini model access and provider configuration in the backend environment.
-Those settings have not been verified with a live provider request. If speech
-synthesis is unavailable, the laptop UI uses browser speech as a fallback.
+Set `OPENAI_API_KEY` in the backend environment to enable Whisper
+transcription. Gemini credentials (`AI_API_KEY`) are still used to interpret
+the transcript and synthesize replies. Do not expose either key in frontend
+environment variables. If speech synthesis is unavailable, the laptop UI uses
+browser speech as a fallback.
 
 ## Manual laptop test checklist
 
@@ -121,7 +124,7 @@ synthesis is unavailable, the laptop UI uses browser speech as a fallback.
    configuration. The assistant should clarify or show an error rather than
    claim success.
 
-Automated backend tests use a disposable SQLite database and mocked Gemini
-responses. They do not connect to the existing PostgreSQL database or verify
-live provider access. Complete the manual checklist before treating Phase 1 as
-live end-to-end verified.
+Automated backend tests use a disposable SQLite database and mocked Whisper
+and Gemini responses. They do not connect to the existing PostgreSQL database
+or verify live provider access. Complete the manual checklist before treating
+Phase 1 as live end-to-end verified.

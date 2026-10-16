@@ -15,3 +15,9 @@ def test_ai_api_url_is_accepted_as_legacy_base_url_alias():
         AI_API_URL="https://example.test/v1/chat/completions",
     )
     assert settings.ai_base_url == "https://example.test/v1/chat/completions"
+
+
+def test_whisper_key_is_optional_and_accepts_environment_name():
+    assert Settings(_env_file=None).openai_api_key == ""
+    settings = Settings(_env_file=None, OPENAI_API_KEY="test-key")
+    assert settings.openai_api_key == "test-key"

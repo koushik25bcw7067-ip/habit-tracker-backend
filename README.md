@@ -23,7 +23,8 @@ The backend is the source of truth for numerical statistics. AI receives verifie
 - Recommendation accept/reject history
 - Optional OpenAI-compatible AI provider
 - AI analysis, weekly/monthly reports and new-habit suggestions
-- Authenticated laptop voice commands and a paired-device companion API
+- Authenticated laptop voice commands with optional OpenAI Whisper transcription
+and a paired-device companion API
 - Swagger/OpenAPI
 - Alembic migrations
 - Seed data and tests
@@ -130,6 +131,10 @@ AI_MODEL=gpt-4o-mini
 The AI service sends only calculated habit statistics and related non-authentication data. It never receives passwords, JWTs or API keys.
 
 If AI is unavailable, habit tracking, statistics and rule-based recommendations continue working.
+
+For Whisper-powered voice transcription, set `OPENAI_API_KEY` in the backend
+environment. If it is absent, voice commands use the legacy Gemini audio
+transcription path. Do not expose provider keys in the frontend.
 
 ## Consistency score
 

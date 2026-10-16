@@ -55,6 +55,60 @@ def test_validate_wav_rejects_audio_longer_than_limit():
     assert error.value.status_code == 422
 
 
+def test_whisper_transcription_sends_wav_and_returns_verbatim_text(monkeypatch):
+    monkeypatch.setattr(voice_service.settings, "openai_api_key", "test-key")
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        @staticmethod
+        def json():
+            return {"text": "నా routines complete చెయ్యి"}
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr(voice_service.httpx, "post", fake_post)
+
+    transcript = voice_service._transcribe_whisper(make_wav())
+
+    assert transcript == "నా routines complete చెయ్యి"
+    assert captured["url"] == "https://api.openai.com/v1/audio/transcriptions"
+    assert captured["headers"] == {"Authorization": "Bearer test-key"}
+    assert captured["data"]["model"] == "whisper-1"
+    assert captured["files"]["file"][0] == "voice.wav"
+    assert captured["files"]["file"][2] == "audio/wav"
+
+
+def test_whisper_transcription_requires_server_key(monkeypatch):
+    monkeypatch.setattr(voice_service.settings, "openai_api_key", "")
+
+    with pytest.raises(HTTPException) as error:
+        voice_service._transcribe_whisper(make_wav())
+
+    assert error.value.status_code == 503
+
+
+def test_whisper_transcription_surfaces_provider_failures(monkeypatch):
+    import httpx
+
+    monkeypatch.setattr(voice_service.settings, "openai_api_key", "test-key")
+
+    def fail_request(*_args, **_kwargs):
+        raise httpx.ConnectError("provider unavailable")
+
+    monkeypatch.setattr(voice_service.httpx, "post", fail_request)
+
+    with pytest.raises(HTTPException) as error:
+        voice_service._transcribe_whisper(make_wav())
+
+    assert error.value.status_code == 502
+
+
 @pytest.mark.parametrize(
     ("spoken", "expected"),
     [
@@ -118,12 +172,33 @@ def test_task_write_waits_for_clear_confirmation(monkeypatch):
                 {"transcript": "Yes, please!", "intent": "confirm"},
             ]
         )
-        monkeypatch.setattr(
-            voice_service, "_gemini_json", lambda _audio, _prompt: next(intents)
+        transcripts = iter(
+            [
+                "Create a task to review notes",
+                "Yes, but not that one",
+                "Yes, please!",
+            ]
         )
-        reply, status_text, action_id, _ = voice_service.process_voice_turn(
+        monkeypatch.setattr(
+            voice_service.settings, "openai_api_key", "test-key"
+        )
+        monkeypatch.setattr(
+            voice_service,
+            "_transcribe_whisper",
+            lambda _audio: next(transcripts),
+        )
+        monkeypatch.setattr(
+            voice_service,
+            "_gemini_text_json",
+            lambda _transcript, _prompt: {
+                **next(intents),
+                "transcript": "Gemini-generated transcript must not replace Whisper",
+            },
+        )
+        reply, status_text, action_id, transcript = voice_service.process_voice_turn(
             db, device, make_wav()
         )
+        assert transcript == "Create a task to review notes"
         assert status_text == "confirmation_required"
         assert action_id
         assert "Review notes" in reply
