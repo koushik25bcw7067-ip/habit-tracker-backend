@@ -84,6 +84,51 @@ def test_attack_on_titan_customization_uses_a_specific_curated_world(monkeypatch
     assert ts.generate_custom("Shingeki no Kyojin")["colors"] == theme["colors"]
 
 
+def test_mentalist_request_gets_a_specific_curated_mystery_theme(monkeypatch):
+    monkeypatch.setattr(ts.settings, "ai_api_key", "configured")
+    ts._cache.clear()
+
+    theme = ts.generate_custom("The Mentalist")
+
+    assert theme["source"] == "curated"
+    assert theme["label"] == "The Mentalist"
+    assert theme["mode"] == "dark"
+    assert theme["colors"]["primary"] == "#a92e45"
+    assert theme["colors"]["background"] == "#191719"
+    assert theme["fonts"]["display"] == "Playfair Display"
+    assert theme["mascot"]["accessory"] == "glasses"
+    assert "investigative-mystery" in theme["description"]
+    assert ts.generate_custom("The Mentalist series")["colors"] == theme["colors"]
+
+
+def test_theme_generation_preserves_explicit_color_and_mode_preferences(monkeypatch):
+    monkeypatch.setattr(ts.settings, "ai_api_key", "configured")
+    ts._cache.clear()
+
+    theme = ts.generate_custom("The Mentalist with a purple palette in light mode")
+
+    assert theme["source"] == "curated"
+    assert theme["mode"] == "light"
+    assert theme["colors"]["primary"] == ts._hsl_to_hex(275, 64, 44)
+    assert theme["mascot"]["outfit"] == theme["colors"]["primary"]
+    assert theme["colors"]["background"] == "#f8f6f3"
+    assert theme["colors"]["text"] == "#211b1b"
+
+
+def test_ai_theme_keeps_explicit_color_and_mode_preferences(monkeypatch):
+    monkeypatch.setattr(ts.settings, "ai_api_key", "k")
+    ts._cache.clear()
+    ai = json.loads(json.dumps(RAW["mahishmati"]))
+    monkeypatch.setattr(ts.httpx, "Client", _fake_client(json.dumps(ai)))
+
+    theme = ts.generate_custom("A forest world with a purple palette in light mode")
+
+    assert theme["source"] == "ai"
+    assert theme["mode"] == "light"
+    assert theme["colors"]["primary"] == ts._hsl_to_hex(275, 64, 44)
+    assert theme["colors"]["background"] == "#f8f6f3"
+
+
 def test_theme_wording_uses_routines_without_changing_private_data_keys():
     raw = json.loads(json.dumps(RAW["classic"]))
     raw["vocab"]["habit"] = "Spell"
@@ -97,12 +142,13 @@ def test_theme_wording_uses_routines_without_changing_private_data_keys():
     assert theme["lines"]["habit_done"] == ["Routine done!"]
 
 
-def test_generate_without_key_uses_fallback_and_caches(monkeypatch):
+def test_generate_without_key_uses_uncached_fallback(monkeypatch):
     monkeypatch.setattr(ts.settings, "ai_api_key", "")
     ts._cache.clear()
     first = ts.generate_custom("Interstellar")
     assert first["source"] == "fallback" and first["accent_color"]
-    assert ts.generate_custom("interstellar") == first
+    assert ts.generate_custom("interstellar")["colors"] == first["colors"]
+    assert "interstellar" not in ts._cache
 
 
 def _fake_client(content):
@@ -145,6 +191,40 @@ def test_generate_provider_error_falls_back(monkeypatch):
         def __exit__(self, *a): ...
     monkeypatch.setattr(ts.httpx, "Client", lambda **k: Boom())
     assert ts.generate_custom("Naruto")["source"] == "fallback"
+
+
+def test_custom_world_prompt_preserves_arbitrary_reference_and_preferences():
+    prompt = ts._build_prompt("A cozy Ghibli-inspired seaside town in teal, light mode")
+
+    assert "A cozy Ghibli-inspired seaside town in teal, light mode" in prompt
+    assert "cartoon, anime, movie, series, show, game, book" in ts.SYSTEM_PROMPT
+    assert "do not replace it with an unrelated generic theme" in ts.SYSTEM_PROMPT
+    assert "Preserve every explicit user preference" in prompt
+    assert "the named world/reference from the request" in prompt
+
+
+def test_provider_fallback_is_not_cached_and_a_retry_regenerates(monkeypatch):
+    monkeypatch.setattr(ts.settings, "ai_api_key", "configured")
+    ts._cache.clear()
+
+    class Boom:
+        def __enter__(self):
+            raise RuntimeError("provider unavailable")
+
+        def __exit__(self, *_args):
+            pass
+
+    monkeypatch.setattr(ts.httpx, "Client", lambda **_kwargs: Boom())
+    first = ts.generate_custom("A cozy Ghibli seaside town")
+    assert first["source"] == "fallback"
+    assert "a cozy ghibli seaside town" not in ts._cache
+
+    ai = json.loads(json.dumps(RAW["cloud"]))
+    monkeypatch.setattr(ts.httpx, "Client", _fake_client(json.dumps(ai)))
+    retry = ts.generate_custom("A cozy Ghibli seaside town")
+    assert retry["source"] == "ai"
+    assert retry["label"] == ai["label"]
+    assert "a cozy ghibli seaside town" in ts._cache
 
 
 def test_persona_prompt_mentions_world_but_keeps_facts_rule():
