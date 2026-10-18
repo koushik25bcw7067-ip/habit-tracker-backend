@@ -101,6 +101,35 @@ def test_mentalist_request_gets_a_specific_curated_mystery_theme(monkeypatch):
     assert ts.generate_custom("The Mentalist series")["colors"] == theme["colors"]
 
 
+def test_doraemon_request_uses_blue_white_red_palette_even_without_ai(monkeypatch):
+    monkeypatch.setattr(ts.settings, "ai_api_key", "")
+    ts._cache.clear()
+
+    theme = ts.generate_custom("Doraemon")
+
+    assert theme["source"] == "curated"
+    assert theme["label"] == "Doraemon-inspired"
+    assert theme["mode"] == "light"
+    assert theme["colors"]["primary"] == "#1687d4"
+    assert theme["colors"]["secondary"] == "#e63946"
+    assert theme["colors"]["background"] == "#f5faff"
+    assert theme["fonts"]["display"] == "Fredoka"
+    assert theme["effects"]["radius"] == "round"
+    assert "green" not in theme["description"].lower()
+
+
+def test_doraemon_theme_keeps_explicit_user_palette_preferences(monkeypatch):
+    monkeypatch.setattr(ts.settings, "ai_api_key", "")
+    ts._cache.clear()
+
+    theme = ts.generate_custom("Doraemon but make it a purple dark theme")
+
+    assert theme["source"] == "curated"
+    assert theme["mode"] == "dark"
+    assert theme["colors"]["primary"] == ts._hsl_to_hex(275, 64, 57)
+    assert theme["colors"]["background"] == "#191719"
+
+
 def test_theme_generation_preserves_explicit_color_and_mode_preferences(monkeypatch):
     monkeypatch.setattr(ts.settings, "ai_api_key", "configured")
     ts._cache.clear()

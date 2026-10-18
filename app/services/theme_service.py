@@ -276,6 +276,10 @@ def _is_mentalist(query: str) -> bool:
     return bool(re.search(r"\bthe\s+mentalist\b|\bmentalist\s+series\b", normalized))
 
 
+def _is_doraemon(query: str) -> bool:
+    return bool(re.search(r"\bdoraemon\b", normalize_query(query).lower()))
+
+
 _COLOR_HUES = {
     "red": 4,
     "crimson": 350,
@@ -385,6 +389,53 @@ def _mentalist_theme(query: str) -> dict:
     }, query)
 
 
+def _doraemon_theme(query: str) -> dict:
+    return sanitize_theme({
+        "label": "Doraemon-inspired",
+        "description": "A playful futuristic-helper world with clear sky blue, bright red, warm white and friendly rounded details.",
+        "mode": "light",
+        "colors": {
+            "primary": "#1687d4",
+            "secondary": "#e63946",
+            "tertiary": "#e5ad32",
+            "background": "#f5faff",
+            "text": "#172638",
+        },
+        "fonts": {"display": "Fredoka", "body": "Nunito"},
+        "effects": {
+            "texture": "dots",
+            "ambient": "sparkle",
+            "radius": "round",
+            "border": "glow",
+            "heading_case": "none",
+            "heading_tracking": 0,
+        },
+        "mascot": {
+            "name": "Mira",
+            "emoji": "✨",
+            "accessory": "headband",
+            "outfit": "#1687d4",
+            "skin": "#fde0c4",
+        },
+        "lines": {
+            "greeting": ["Hi, {name}! Ready for a bright new adventure?"],
+            "idle": ["A clever little idea can make today easier.", "Your next step is closer than it looks."],
+            "poke": ["Here I am! What shall we figure out?"],
+            "thinking": ["Thinking up a helpful idea…"],
+            "habit_created": ["A new routine is ready for your adventure: {habit}."],
+            "habit_done": ["Brilliant! {habit} is complete."],
+            "habit_undone": ["No worries. We can give that routine another try."],
+            "task_created": ["Added to your list: {task}."],
+            "task_done": ["Nicely done! {task} is complete."],
+            "streak": ["{streak} days in a row! Your progress is growing."],
+            "missed": ["Your routine {habit} is waiting when you're ready."],
+            "milestone": ["A bright new milestone. You did it!"],
+            "encourage": ["Pick one small step. You've got this!"],
+        },
+        "source": "curated",
+    }, query)
+
+
 def _attack_on_titan_theme(query: str) -> dict:
     return sanitize_theme({
         "label": "Attack on Titan",
@@ -434,6 +485,8 @@ def _attack_on_titan_theme(query: str) -> dict:
 
 def fallback_theme(query: str) -> dict:
     q = normalize_query(query) or "Custom"
+    if _is_doraemon(q):
+        return _apply_explicit_preferences(_doraemon_theme(q), q)
     if _is_mentalist(q):
         return _mentalist_theme(q)
     if _is_attack_on_titan(q):
@@ -558,6 +611,13 @@ def generate_custom(query: str) -> dict:
     """Generate a theme from a description; only successful AI/curated results are cached."""
     q = normalize_query(query)
     key = q.lower()
+    if _is_doraemon(q):
+        curated = to_public(_apply_explicit_preferences(_doraemon_theme(q), q))
+        with _lock:
+            _cache[key] = curated
+            while len(_cache) > 200:
+                _cache.popitem(last=False)
+        return copy.deepcopy(curated)
     if _is_mentalist(q):
         curated = to_public(_apply_explicit_preferences(_mentalist_theme(q), q))
         with _lock:
