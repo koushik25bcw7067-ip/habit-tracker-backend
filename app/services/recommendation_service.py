@@ -1,6 +1,6 @@
 from datetime import date, datetime, timedelta, time
 from collections import Counter
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.models.habit import Habit, Frequency, Priority
 from app.models.completion import HabitCompletion
@@ -46,6 +46,29 @@ def generate_all(db, user_id):
             "Focusing on high-priority routines may improve consistency.",
             "Review your highest-priority routines before adding more."))
     return out
+
+
+def latest_recommendations(db: Session, user_id: int, limit: int = 50):
+    ranked = (
+        select(
+            Recommendation.id.label("id"),
+            func.row_number().over(
+                partition_by=[Recommendation.type, Recommendation.habit_id],
+                order_by=[Recommendation.created_at.desc(), Recommendation.id.desc()],
+            )
+            .label("row_number"),
+        )
+        .where(Recommendation.user_id == user_id)
+        .subquery()
+    )
+    return db.scalars(
+        select(Recommendation)
+        .join(ranked, Recommendation.id == ranked.c.id)
+        .where(ranked.c.row_number == 1)
+        .order_by(Recommendation.created_at.desc(), Recommendation.id.desc())
+        .limit(limit)
+    ).all()
+
 
 def _rec(db,user_id,habit,rtype,priority,confidence,title,reason,benefit,action):
     query = select(Recommendation).where(

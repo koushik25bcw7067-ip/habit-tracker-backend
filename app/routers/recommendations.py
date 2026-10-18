@@ -6,14 +6,14 @@ from app.database.dependencies import get_db
 from app.routers.users import current_user
 from app.models.recommendation import Recommendation,RecommendationStatus
 from app.models.habit import Habit
-from app.services.recommendation_service import generate_all,generate_habit_recommendations,best_time,weekly_plan
+from app.services.recommendation_service import generate_all,generate_habit_recommendations,best_time,weekly_plan,latest_recommendations
 from app.services.statistics_service import period_statistics
 router=APIRouter(prefix="/recommendations",tags=["Recommendations"])
 
 @router.get("")
 def all_recommendations(user=Depends(current_user),db:Session=Depends(get_db)):
     generate_all(db,user.id)
-    return db.scalars(select(Recommendation).where(Recommendation.user_id==user.id).order_by(Recommendation.created_at.desc()).limit(50)).all()
+    return latest_recommendations(db, user.id)
 
 @router.get("/habits/{habit_id}")
 def habit_recommendations(habit_id:int,user=Depends(current_user),db:Session=Depends(get_db)):
