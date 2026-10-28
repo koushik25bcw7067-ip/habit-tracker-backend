@@ -25,11 +25,11 @@ logger = logging.getLogger(__name__)
 MAX_AUDIO_BYTES = 512 * 1024
 MAX_AUDIO_SECONDS = 15
 
-# Stable models
+# Updated active Google models
 MODELS_LIST = [
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-flash-latest",
 ]
 
 _YES_UTTERANCES = {
@@ -56,7 +56,6 @@ def validate_wav(audio: bytes) -> None:
 
 
 def _api_key() -> str:
-    # Check settings, and fallback to direct OS environment variables
     key = (
         getattr(settings, "ai_api_key", "")
         or os.environ.get("AI_API_KEY", "")
@@ -67,9 +66,6 @@ def _api_key() -> str:
     
     if not key:
         logger.error("CRITICAL: AI_API_KEY is missing in both settings and os.environ!")
-    else:
-        # Safe debug: prints first 6 characters to verify key is present without exposing full key
-        logger.info("Loaded API Key prefix: %s... (len: %d)", key[:6], len(key))
     return key
 
 
