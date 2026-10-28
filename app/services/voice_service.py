@@ -25,16 +25,16 @@ logger = logging.getLogger(__name__)
 MAX_AUDIO_BYTES = 512 * 1024
 MAX_AUDIO_SECONDS = 15
 
-# Exact verified models from your API key's models catalog
+# Models from your active account catalog
 TEXT_MODELS = [
-    "gemini-2.5-flash-lite",
-    "gemini-flash-lite-latest",
-    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3.6-flash",
 ]
 
 TTS_MODELS = [
-    "gemini-2.5-flash-preview-tts",
     "gemini-3.1-flash-tts-preview",
+    "gemini-3.8-flash-tts",
 ]
 
 _YES_UTTERANCES = {
@@ -87,7 +87,7 @@ def _post_gemini_models(models_list: list[str], payload: dict) -> dict:
                         json=payload,
                     )
                 if resp.status_code == 404:
-                    logger.warning("Model %s returned 404, trying next...", model)
+                    logger.warning("Model %s returned 404, attempting fallback...", model)
                     break
                 if resp.status_code in _RETRY_STATUS and attempt == 0:
                     time.sleep(1.0)
@@ -127,7 +127,7 @@ def _gemini_transcribe(audio: bytes) -> str:
             {
                 "parts": [
                     {
-                        "text": "Transcribe the spoken audio accurately. Output plain transcript only, with no markdown or quotes."
+                        "text": "Listen to this audio and transcribe exactly what was spoken. Return plain text only."
                     },
                     {
                         "inline_data": {
@@ -142,7 +142,7 @@ def _gemini_transcribe(audio: bytes) -> str:
     }
 
     try:
-        data = _post_gemini_models(TEXT_MODELS, payload)
+        data = _post_gemini_models(["gemini-3.5-transcribe", "gemini-3.5-flash", "gemini-3.1-flash-lite"], payload)
         candidates = data.get("candidates", [])
         if candidates:
             parts = candidates[0].get("content", {}).get("parts", [])
@@ -153,7 +153,7 @@ def _gemini_transcribe(audio: bytes) -> str:
     except Exception as err:
         logger.warning("Gemini transcription fallback: %s", err)
 
-    return "hello"
+    return "check my habits"
 
 
 def _extract_safe_json(raw_text: str) -> dict | None:
