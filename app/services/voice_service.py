@@ -25,11 +25,16 @@ logger = logging.getLogger(__name__)
 MAX_AUDIO_BYTES = 512 * 1024
 MAX_AUDIO_SECONDS = 15
 
-# Updated active Google models
-MODELS_LIST = [
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-flash-latest",
+# Exact verified models from your API key's models catalog
+TEXT_MODELS = [
+    "gemini-2.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3.5-flash-lite",
+]
+
+TTS_MODELS = [
+    "gemini-2.5-flash-preview-tts",
+    "gemini-3.1-flash-tts-preview",
 ]
 
 _YES_UTTERANCES = {
@@ -56,26 +61,22 @@ def validate_wav(audio: bytes) -> None:
 
 
 def _api_key() -> str:
-    key = (
+    return (
         getattr(settings, "ai_api_key", "")
         or os.environ.get("AI_API_KEY", "")
         or os.environ.get("GEMINI_API_KEY", "")
         or os.environ.get("GOOGLE_API_KEY", "")
         or ""
     ).strip().strip('"').strip("'")
-    
-    if not key:
-        logger.error("CRITICAL: AI_API_KEY is missing in both settings and os.environ!")
-    return key
 
 
-def _post_gemini(payload: dict) -> dict:
+def _post_gemini_models(models_list: list[str], payload: dict) -> dict:
     key = _api_key()
     if not key:
         raise RuntimeError("No Google AI API key configured")
 
     last_error = None
-    for model in MODELS_LIST:
+    for model in models_list:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
         for attempt in range(2):
             try:
@@ -86,7 +87,7 @@ def _post_gemini(payload: dict) -> dict:
                         json=payload,
                     )
                 if resp.status_code == 404:
-                    logger.warning("Model %s returned 404. Body: %s", model, resp.text[:120])
+                    logger.warning("Model %s returned 404, trying next...", model)
                     break
                 if resp.status_code in _RETRY_STATUS and attempt == 0:
                     time.sleep(1.0)
@@ -141,7 +142,7 @@ def _gemini_transcribe(audio: bytes) -> str:
     }
 
     try:
-        data = _post_gemini(payload)
+        data = _post_gemini_models(TEXT_MODELS, payload)
         candidates = data.get("candidates", [])
         if candidates:
             parts = candidates[0].get("content", {}).get("parts", [])
@@ -195,7 +196,7 @@ def _gemini_text_json(transcript: str, prompt: str) -> dict:
     }
 
     try:
-        data = _post_gemini(payload)
+        data = _post_gemini_models(TEXT_MODELS, payload)
         candidates = data.get("candidates", [])
         if candidates:
             parts = candidates[0].get("content", {}).get("parts", [])
@@ -235,7 +236,7 @@ def _synthesize(text: str) -> bytes:
     }
 
     try:
-        data = _post_gemini(payload)
+        data = _post_gemini_models(TTS_MODELS, payload)
         candidates = data.get("candidates", [])
         if candidates:
             parts = candidates[0].get("content", {}).get("parts", [])
