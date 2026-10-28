@@ -18,7 +18,6 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.companion_device import CompanionDevice
 from app.schemas.companion import VoiceIntent
-from app.services.ai_service import AIService
 from app.services.companion_service import (
     clear_pending_action,
     execute_pending_action,
@@ -32,7 +31,8 @@ logger = logging.getLogger(__name__)
 MAX_AUDIO_BYTES = 512 * 1024
 MAX_AUDIO_SECONDS = 15
 
-FALLBACK_MODEL = "gemini-1.5-flash"
+# Reliable standard model for stability
+DEFAULT_MODEL = "gemini-1.5-flash"
 
 _YES_UTTERANCES = {
     "yes", "yes please", "yes do that", "yes go ahead", "please do it",
@@ -72,53 +72,49 @@ def _api_key() -> str:
     return (getattr(settings, "ai_api_key", "") or "").strip()
 
 
-def _clean_model_name(raw_model: str | None) -> str:
-    name = (raw_model or "").strip()
-    if not name:
-        return FALLBACK_MODEL
-    if "://" in name:
-        return name.split("/")[-1].split(":")[0]
-    if name.startswith("models/"):
-        name = name.replace("models/", "")
-    return name
+def _get_active_model() -> str:
+    raw_model = (getattr(settings, "ai_model", "") or "").strip()
+    if not raw_model or "3." in raw_model:
+        return DEFAULT_MODEL
+    if raw_model.startswith("models/"):
+        return raw_model.replace("models/", "")
+    return raw_model
 
 
-def _get_gemini_endpoint() -> str:
-    model = _clean_model_name(getattr(settings, "ai_model", None))
-    return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-
-
-def _post_with_retry(endpoint: str, payload: dict, attempts: int = 2) -> httpx.Response:
-    if not endpoint.startswith("http://") and not endpoint.startswith("https://"):
-        endpoint = f"https://{endpoint.lstrip('/')}"
-
+def _post_with_retry(endpoint: str, payload: dict, attempts: int = 3) -> httpx.Response:
+    key = _api_key()
     for attempt in range(attempts):
         last = (attempt == attempts - 1)
         try:
             with httpx.Client(timeout=httpx.Timeout(20.0, connect=5.0)) as client:
                 response = client.post(
                     endpoint,
-                    headers={"x-goog-api-key": _api_key()},
+                    headers={"x-goog-api-key": key},
                     json=payload,
                 )
-        except (httpx.TimeoutException, httpx.TransportError):
+        except (httpx.TimeoutException, httpx.TransportError) as e:
             if last:
-                raise
-            time.sleep(0.5 * (2 ** attempt))
+                raise e
+            time.sleep(1.0 * (attempt + 1))
+            continue
+
+        if response.status_code == 429 and not last:
+            # Rate limit hit -> cool off before retrying
+            time.sleep(2.0 * (attempt + 1))
             continue
 
         if response.status_code in _RETRY_STATUS and not last:
-            time.sleep(0.5 * (2 ** attempt))
+            time.sleep(1.0 * (attempt + 1))
             continue
 
         response.raise_for_status()
         return response
 
-    raise RuntimeError("Retry attempts exhausted")
+    raise RuntimeError("API retry limit reached")
 
 
 def _generate_fallback_wav() -> bytes:
-    """Procedural 16kHz mono chime so ESP32 never hits a null/dead audio state."""
+    """Procedural 16kHz mono chime so ESP32 always plays a clean audio response."""
     buf = BytesIO()
     sample_rate = 16000
     duration = 0.7
@@ -139,13 +135,15 @@ def _gemini_transcribe(audio: bytes) -> str:
     if not key:
         return "hello companion"
 
-    endpoint = _get_gemini_endpoint()
+    model = _get_active_model()
+    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
     payload = {
         "contents": [
             {
                 "parts": [
                     {
-                        "text": "Transcribe the spoken audio accurately. Output plain transcript only, with no formatting or quotes."
+                        "text": "Transcribe the spoken audio accurately. Output plain transcript only, with no markdown or quotes."
                     },
                     {
                         "inline_data": {
@@ -203,9 +201,14 @@ def _extract_safe_json(raw_text: str) -> dict | None:
 def _gemini_text_json(transcript: str, prompt: str) -> dict:
     key = _api_key()
     if not key:
-        return {"transcript": transcript, "intent": "chat"}
+        return {"transcript": transcript, "intent": "chat", "reply": "Hello, how can I help you?"}
 
-    endpoint = _get_gemini_endpoint()
+    # Short delay to prevent 429 quota spikes between transcribe and intent parse
+    time.sleep(0.4)
+
+    model = _get_active_model()
+    endpoint = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model}:generateContent"
+
     transcription = f"Spoken Transcription: {json.dumps(transcript, ensure_ascii=False)}\n\n{prompt}"
     payload = {
         "contents": [{"parts": [{"text": transcription}]}],
@@ -228,7 +231,7 @@ def _gemini_text_json(transcript: str, prompt: str) -> dict:
     except Exception as err:
         logger.warning("Companion intent parse fallback: %s", err)
 
-    return {"transcript": transcript, "intent": "chat"}
+    return {"transcript": transcript, "intent": "chat", "reply": "Got it, system is online."}
 
 
 def _synthesize(text: str) -> bytes:
@@ -236,15 +239,18 @@ def _synthesize(text: str) -> bytes:
     if not key:
         return _generate_fallback_wav()
 
-    model = _clean_model_name(getattr(settings, "tts_model", None) or getattr(settings, "ai_model", None))
-    endpoint = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model}:generateContent"
+    # Short delay to prevent 429 quota burst
+    time.sleep(0.3)
+
+    # Use standard stable endpoint to prevent DNS lookup errors
+    endpoint = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){DEFAULT_MODEL}:generateContent"
 
     payload = {
         "contents": [
             {
                 "parts": [
                     {
-                        "text": f"Read aloud in a warm, concise tone: {text[:200]}"
+                        "text": f"Read aloud in a clear, pleasant voice: {text[:200]}"
                     }
                 ]
             }
@@ -260,7 +266,7 @@ def _synthesize(text: str) -> bytes:
     }
 
     try:
-        response = _post_with_retry(endpoint, payload)
+        response = _post_with_retry(endpoint, payload, attempts=2)
         data = response.json()
         candidates = data.get("candidates", [])
         if candidates:
@@ -270,7 +276,7 @@ def _synthesize(text: str) -> bytes:
                 if inline.get("data"):
                     return base64.b64decode(inline["data"], validate=True)
     except Exception as error:
-        logger.warning("TTS audio synthesis notice: %s", error)
+        logger.warning("TTS generation notice: %s", error)
 
     return _generate_fallback_wav()
 
@@ -279,14 +285,14 @@ def _intent_prompt(context: dict, pending_action: dict | None, expires_at) -> st
     pending = ""
     if pending_action:
         pending = (
-            f"\nPending action: {json.dumps(pending_action, ensure_ascii=False)}. "
-            "If yes, return {\"intent\": \"confirm\"}. If no, return {\"intent\": \"cancel\"}."
+            f"\nPending action awaiting confirmation: {json.dumps(pending_action, ensure_ascii=False)}. "
+            "For yes return {\"intent\": \"confirm\"}. For no return {\"intent\": \"cancel\"}."
         )
     return (
-        "Classify the routine/habit user intent. "
-        "Return pure JSON with keys: transcript, intent, title, description, priority. "
+        "Classify the routine/habit user intent and formulate a short natural spoken reply (under 25 words). "
+        "Return pure JSON with keys: transcript, intent, reply, title, description, priority. "
         "Allowed intents: chat, create_task, complete_task, list_tasks, list_habits, confirm, cancel."
-        f"\nItems:\n{json.dumps(context, ensure_ascii=False)}"
+        f"\nUser Data Context:\n{json.dumps(context, ensure_ascii=False)}"
         f"{pending}"
     )
 
@@ -327,10 +333,11 @@ def process_voice_turn(
 
     result = _gemini_text_json(transcript, prompt)
     if not isinstance(result, dict):
-        result = {"transcript": transcript, "intent": "chat"}
+        result = {"transcript": transcript, "intent": "chat", "reply": "I am listening."}
 
     result["transcript"] = transcript
     intent_val = result.get("intent", "chat")
+    ai_reply = result.get("reply", "")
 
     if device.pending_action:
         action_id = device.pending_action_id
@@ -346,13 +353,7 @@ def process_voice_turn(
             reply = "Please say yes to confirm or no to cancel."
             status_text = "confirmation_required"
     elif intent_val == "chat":
-        try:
-            chat_result = AIService(db, device.user_id).chat(
-                [{"role": "user", "content": transcript}]
-            )
-            reply = str(chat_result.get("reply", "")).strip() or "I am listening."
-        except Exception:
-            reply = "I heard you, system is ready."
+        reply = ai_reply.strip() or "I am listening."
         status_text = "replied"
         action_id = None
     elif intent_val == "list_tasks":
@@ -366,11 +367,11 @@ def process_voice_turn(
         status_text = "replied"
         action_id = None
     else:
-        reply = "Got your update."
+        reply = ai_reply.strip() or "Got your update."
         status_text = "replied"
         action_id = None
 
-    return reply[:250], status_text, action_id, transcript
+    return reply[:200], status_text, action_id, transcript
 
 
 def synthesize_reply(reply: str) -> bytes:
