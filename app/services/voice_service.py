@@ -31,7 +31,6 @@ from app.services.statistics_service import period_statistics
 logger = logging.getLogger(__name__)
 MAX_AUDIO_BYTES = 512 * 1024
 MAX_AUDIO_SECONDS = 15
-TTS_MODEL = "gemini-3.8-flash-tts"
 
 _YES_UTTERANCES = {
     "yes", "yes please", "yes do that", "yes go ahead", "please do it",
@@ -71,15 +70,15 @@ def _api_key() -> str:
 
 
 def _get_gemini_endpoint() -> str:
-    raw_model = getattr(settings, "ai_model", None)
-    model = (raw_model or "").strip() or "gemini-1.5-flash"
-    
-    # Strip any extra URL pieces or 'models/' prefix
-    if "://" in model:
-        return model
+    # Use reliable stable flash model to avoid 503 high-demand errors
+    raw_model = getattr(settings, "ai_model", "")
+    model = (raw_model or "").strip()
+    if not model or "3.6" in model or "3.8" in model:
+        model = "gemini-2.5-flash"
+
     if model.startswith("models/"):
         model = model.replace("models/", "")
-        
+
     return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
@@ -103,12 +102,11 @@ def _generate_fallback_wav() -> bytes:
 def _gemini_transcribe(audio: bytes) -> str:
     key = _api_key()
     if not key:
-        return "hello companion"
+        return "hello"
 
     endpoint = _get_gemini_endpoint()
     transcription_prompt = (
-        "Transcribe the audio exactly as spoken. Return only the transcript, "
-        "with no explanation or commentary."
+        "Transcribe the audio exactly as spoken. Return only the transcript text."
     )
     payload = {
         "contents": [
@@ -139,10 +137,18 @@ def _gemini_transcribe(audio: bytes) -> str:
                     time.sleep(1.0)
                     continue
                 response.raise_for_status()
-                text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-                transcript = text.strip()
-                if transcript:
-                    return transcript
+                data = response.json()
+                
+                # Safe candidate & parts extraction
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    return "hello"
+                content = candidates[0].get("content", {})
+                parts = content.get("parts", [])
+                if parts and "text" in parts[0]:
+                    transcript = parts[0]["text"].strip()
+                    if transcript:
+                        return transcript
         except Exception as err:
             logger.warning("Gemini transcribe attempt %d failed: %s", attempt, err)
             time.sleep(0.5)
@@ -176,16 +182,20 @@ def _gemini_text_json(transcript: str, prompt: str) -> dict:
                 json=payload,
             )
             response.raise_for_status()
-            text = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-
-            if "```" in text:
-                text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.MULTILINE)
-                text = re.sub(r"\s*```$", "", text, flags=re.MULTILINE)
-
-            return json.loads(text.strip())
+            data = response.json()
+            candidates = data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts and "text" in parts[0]:
+                    text = parts[0]["text"].strip()
+                    if "```" in text:
+                        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.MULTILINE)
+                        text = re.sub(r"\s*```$", "", text, flags=re.MULTILINE)
+                    return json.loads(text.strip())
     except Exception as err:
         logger.warning("Companion intent parse fallback: %s", err)
-        return {"transcript": transcript, "intent": "chat"}
+
+    return {"transcript": transcript, "intent": "chat"}
 
 
 def _synthesize(text: str) -> bytes:
@@ -195,7 +205,7 @@ def _synthesize(text: str) -> bytes:
 
     endpoint = "[https://generativelanguage.googleapis.com/v1beta/interactions](https://generativelanguage.googleapis.com/v1beta/interactions)"
     payload = {
-        "model": TTS_MODEL,
+        "model": "gemini-2.5-flash",
         "input": [
             {
                 "type": "user_input",
