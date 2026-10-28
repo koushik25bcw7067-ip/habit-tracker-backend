@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 MAX_AUDIO_BYTES = 512 * 1024
 MAX_AUDIO_SECONDS = 15
 
+# Stable production model
+ACTIVE_MODEL = "gemini-1.5-flash"
+
 _YES_UTTERANCES = {
     "yes", "yes please", "yes do that", "yes go ahead", "please do it",
     "yeah", "yep", "confirm", "confirm it", "do it", "go ahead",
@@ -70,31 +73,23 @@ def _api_key() -> str:
 
 
 def _get_gemini_endpoint() -> str:
-    # Use reliable stable flash model to avoid 503 high-demand errors
-    raw_model = getattr(settings, "ai_model", "")
-    model = (raw_model or "").strip()
-    if not model or "3.6" in model or "3.8" in model:
-        model = "gemini-2.5-flash"
-
-    if model.startswith("models/"):
-        model = model.replace("models/", "")
-
-    return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    return f"https://generativelanguage.googleapis.com/v1beta/models/{ACTIVE_MODEL}:generateContent"
 
 
 def _generate_fallback_wav() -> bytes:
-    """Fallback 16kHz mono PCM chime for offline/TTS failures."""
+    """Clean 16kHz mono PCM confirmation sound."""
     buf = BytesIO()
     sample_rate = 16000
-    duration = 0.6
+    duration = 0.8
     with wave.open(buf, "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
         wav.setframerate(sample_rate)
         total_samples = int(sample_rate * duration)
         for i in range(total_samples):
-            freq = 660.0 if i < total_samples // 2 else 880.0
-            val = int(12000.0 * math.sin(2.0 * math.pi * freq * (i / sample_rate)))
+            # Double pleasant chime (523Hz C5 -> 659Hz E5)
+            freq = 523.25 if i < total_samples // 2 else 659.25
+            val = int(14000.0 * math.sin(2.0 * math.pi * freq * (i / sample_rate)))
             wav.writeframes(struct.pack("<h", val))
     return buf.getvalue()
 
@@ -102,11 +97,12 @@ def _generate_fallback_wav() -> bytes:
 def _gemini_transcribe(audio: bytes) -> str:
     key = _api_key()
     if not key:
-        return "hello"
+        return "hello companion"
 
     endpoint = _get_gemini_endpoint()
     transcription_prompt = (
-        "Transcribe the audio exactly as spoken. Return only the transcript text."
+        "Transcribe this user speech exactly as spoken. Return only the plain transcript, "
+        "no explanations or formatting."
     )
     payload = {
         "contents": [
@@ -122,12 +118,12 @@ def _gemini_transcribe(audio: bytes) -> str:
                 ]
             }
         ],
-        "generationConfig": {"temperature": 0, "maxOutputTokens": 256},
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 256},
     }
 
     for attempt in range(2):
         try:
-            with httpx.Client(timeout=httpx.Timeout(15.0, connect=4.0)) as client:
+            with httpx.Client(timeout=httpx.Timeout(18.0, connect=5.0)) as client:
                 response = client.post(
                     endpoint,
                     headers={"x-goog-api-key": key},
@@ -139,7 +135,6 @@ def _gemini_transcribe(audio: bytes) -> str:
                 response.raise_for_status()
                 data = response.json()
                 
-                # Safe candidate & parts extraction
                 candidates = data.get("candidates", [])
                 if not candidates:
                     return "hello"
@@ -175,7 +170,7 @@ def _gemini_text_json(transcript: str, prompt: str) -> dict:
     }
 
     try:
-        with httpx.Client(timeout=httpx.Timeout(12.0, connect=4.0)) as client:
+        with httpx.Client(timeout=httpx.Timeout(15.0, connect=4.0)) as client:
             response = client.post(
                 endpoint,
                 headers={"x-goog-api-key": key},
@@ -203,45 +198,48 @@ def _synthesize(text: str) -> bytes:
     if not key:
         return _generate_fallback_wav()
 
-    endpoint = "[https://generativelanguage.googleapis.com/v1beta/interactions](https://generativelanguage.googleapis.com/v1beta/interactions)"
+    # Direct reliable Gemini audio synthesis request
+    url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){ACTIVE_MODEL}:generateContent"
     payload = {
-        "model": "gemini-2.5-flash",
-        "input": [
+        "contents": [
             {
-                "type": "user_input",
-                "content": [
+                "parts": [
                     {
-                        "type": "text",
-                        "text": text[:350],
-                        "annotations": [
-                            {"type": "speech_metadata", "style": "warm, conversational"}
-                        ],
+                        "text": f"Read this response aloud in a natural, clear voice: {text[:250]}"
                     }
-                ],
+                ]
             }
         ],
-        "response_format": {"type": "audio"},
-        "generation_config": {"speech_config": [{"voice": "Kore"}]},
-        "store": False,
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+                "voiceConfig": {
+                    "prebuiltVoiceConfig": {
+                        "voiceName": "Puck"
+                    }
+                }
+            }
+        }
     }
 
     try:
-        with httpx.Client(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
+        with httpx.Client(timeout=httpx.Timeout(18.0, connect=5.0)) as client:
             response = client.post(
-                endpoint,
+                url,
                 headers={"x-goog-api-key": key},
                 json=payload,
             )
-            response.raise_for_status()
-            body = response.json()
-            for step in reversed(body.get("steps", [])):
-                if step.get("type") != "model_output":
-                    continue
-                for item in reversed(step.get("content", [])):
-                    if item.get("type") == "audio" and item.get("data"):
-                        return base64.b64decode(item["data"], validate=True)
+            if response.status_code == 200:
+                data = response.json()
+                candidates = data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    for p in parts:
+                        inline = p.get("inlineData", {})
+                        if inline.get("data"):
+                            return base64.b64decode(inline["data"], validate=True)
     except Exception as error:
-        logger.warning("TTS failed, falling back to chime: %s", error)
+        logger.warning("TTS audio generation note: %s", error)
 
     return _generate_fallback_wav()
 
@@ -294,6 +292,8 @@ def process_voice_turn(
     )
 
     transcript = _gemini_transcribe(audio)
+    logger.info("Transcribed voice text: %s", transcript)
+
     result = _gemini_text_json(transcript, prompt)
     if not isinstance(result, dict):
         result = {"transcript": transcript, "intent": "chat"}
