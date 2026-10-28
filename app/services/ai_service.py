@@ -29,7 +29,7 @@ class AIService:
             getattr(settings, "ai_base_url", "")
             or getattr(settings, "ai_api_url", "")
             or getattr(settings, "AI_API_URL", "")
-            or "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+            or "https://generativelanguage.googleapis.com/v1beta/chat/completions"
         ).rstrip("/")
 
         self.endpoint = self.base_url
