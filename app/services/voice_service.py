@@ -61,18 +61,17 @@ def validate_wav(audio: bytes) -> None:
                 or wav.getcomptype() != "NONE"
                 or wav.getnframes() > MAX_AUDIO_SECONDS * 16000
             ):
-                logger.warning("Non-standard WAV format received; attempting soft bypass")
+                logger.warning("Non-standard WAV format received; soft bypass applied")
     except Exception as error:
         logger.warning("Soft wav validation bypass: %s", error)
 
 
 def _api_key() -> str:
-    key = (getattr(settings, "ai_api_key", "") or "").strip()
-    return key
+    return (getattr(settings, "ai_api_key", "") or "").strip()
 
 
 def _generate_fallback_wav() -> bytes:
-    """Generate a clean 16kHz mono confirmation chime when online TTS fails."""
+    """Fallback 16kHz mono PCM chime for offline/TTS failures."""
     buf = BytesIO()
     sample_rate = 16000
     duration = 0.6
@@ -94,10 +93,10 @@ def _gemini_transcribe(audio: bytes) -> str:
         return "hello companion"
 
     model = getattr(settings, "ai_model", "gemini-3.8-flash")
-    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    endpoint = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model}:generateContent"
     transcription_prompt = (
         "Transcribe the audio exactly as spoken. Return only the transcript, "
-        "with no explanation or punctuation embellishment."
+        "with no explanation or commentary."
     )
     payload = {
         "contents": [
@@ -116,10 +115,9 @@ def _gemini_transcribe(audio: bytes) -> str:
         "generationConfig": {"temperature": 0, "maxOutputTokens": 256},
     }
 
-    # Exponential retry for Gemini 503 high demand spike
     for attempt in range(2):
         try:
-            with httpx.Client(timeout=httpx.Timeout(20.0, connect=5.0)) as client:
+            with httpx.Client(timeout=httpx.Timeout(15.0, connect=4.0)) as client:
                 response = client.post(
                     endpoint,
                     headers={"x-goog-api-key": key},
@@ -146,7 +144,7 @@ def _gemini_text_json(transcript: str, prompt: str) -> dict:
         return {"transcript": transcript, "intent": "chat"}
 
     model = getattr(settings, "ai_model", "gemini-3.8-flash")
-    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    endpoint = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model}:generateContent"
     transcription = (
         f"Transcription: {json.dumps(transcript, ensure_ascii=False)}\n\n{prompt}"
     )
@@ -155,20 +153,26 @@ def _gemini_text_json(transcript: str, prompt: str) -> dict:
         "generationConfig": {
             "responseMimeType": "application/json",
             "temperature": 0.1,
-            "maxOutputTokens": 400,
+            "maxOutputTokens": 300,
         },
     }
 
     try:
-        with httpx.Client(timeout=httpx.Timeout(20.0, connect=5.0)) as client:
+        with httpx.Client(timeout=httpx.Timeout(12.0, connect=4.0)) as client:
             response = client.post(
                 endpoint,
                 headers={"x-goog-api-key": key},
                 json=payload,
             )
             response.raise_for_status()
-            text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-            return json.loads(text)
+            text = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+            # Clean markdown codeblocks if Gemini adds them
+            if "```" in text:
+                text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.MULTILINE)
+                text = re.sub(r"\s*```$", "", text, flags=re.MULTILINE)
+
+            return json.loads(text.strip())
     except Exception as err:
         logger.warning("Companion intent parse fallback: %s", err)
         return {"transcript": transcript, "intent": "chat"}
@@ -202,7 +206,7 @@ def _synthesize(text: str) -> bytes:
     }
 
     try:
-        with httpx.Client(timeout=httpx.Timeout(20.0, connect=5.0)) as client:
+        with httpx.Client(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
             response = client.post(
                 endpoint,
                 headers={"x-goog-api-key": key},
@@ -217,7 +221,7 @@ def _synthesize(text: str) -> bytes:
                     if item.get("type") == "audio" and item.get("data"):
                         return base64.b64decode(item["data"], validate=True)
     except Exception as error:
-        logger.warning("TTS failed, using synthesized fallback chime: %s", error)
+        logger.warning("TTS failed, falling back to chime: %s", error)
 
     return _generate_fallback_wav()
 
@@ -231,7 +235,7 @@ def _intent_prompt(context: dict, pending_action: dict | None, expires_at) -> st
         )
     return (
         "Interpret user voice intent for habit/routine tracking. "
-        "Return JSON with keys: transcript, intent, title, description, priority. "
+        "Return valid JSON object with keys: transcript, intent, title, description, priority. "
         "Intents: chat, create_task, complete_task, list_tasks, list_habits, confirm, cancel."
         f"\nItems:\n{json.dumps(context, ensure_ascii=False)}"
         f"{pending}"
