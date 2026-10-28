@@ -357,18 +357,51 @@ def _synthesize(text: str) -> bytes:
     }
 
     try:
-        response = _post_with_retry(
+         response = _post_with_retry(
+            endpoint,
+            payload,
+            attempts=3,
+        )
+         data = response.json()
+
+        # SDK-style response, if present
+         audio_data = data.get("output_audio", {}).get("data")
+ 
+        # Raw REST Interactions API response
+         if not audio_data:
+            for step in data.get("steps", []):
+                for content in step.get("content", []):
+                    if (
+                        content.get("type") == "audio"
+                        and content.get("data")
+                    ):
+                        audio_data = content["data"]
+                        break
+                if audio_data:
+                    break
+
+         if audio_data:
+            return base64.b64decode(audio_data, validate=True)
+
+         logger.warning(
+            "TTS response structure: %s",
+            json.dumps(data, ensure_ascii=False)[:2000],
+        )
+
+
+
+         response = _post_with_retry(
             endpoint,
             payload,
             attempts=2,
         )
-        data = response.json()
-        audio_data = data.get("output_audio", {}).get("data")
+         data = response.json()
+         audio_data = data.get("output_audio", {}).get("data")
 
-        if audio_data:
+         if audio_data:
             return base64.b64decode(audio_data, validate=True)
 
-        logger.warning(
+         logger.warning(
             "TTS response did not contain output_audio.data"
         )
 
