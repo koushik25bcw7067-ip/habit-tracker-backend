@@ -70,6 +70,19 @@ def _api_key() -> str:
     return (getattr(settings, "ai_api_key", "") or "").strip()
 
 
+def _get_gemini_endpoint() -> str:
+    raw_model = getattr(settings, "ai_model", None)
+    model = (raw_model or "").strip() or "gemini-1.5-flash"
+    
+    # Strip any extra URL pieces or 'models/' prefix
+    if "://" in model:
+        return model
+    if model.startswith("models/"):
+        model = model.replace("models/", "")
+        
+    return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+
 def _generate_fallback_wav() -> bytes:
     """Fallback 16kHz mono PCM chime for offline/TTS failures."""
     buf = BytesIO()
@@ -92,8 +105,7 @@ def _gemini_transcribe(audio: bytes) -> str:
     if not key:
         return "hello companion"
 
-    model = getattr(settings, "ai_model", "gemini-3.8-flash")
-    endpoint = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model}:generateContent"
+    endpoint = _get_gemini_endpoint()
     transcription_prompt = (
         "Transcribe the audio exactly as spoken. Return only the transcript, "
         "with no explanation or commentary."
@@ -143,8 +155,7 @@ def _gemini_text_json(transcript: str, prompt: str) -> dict:
     if not key:
         return {"transcript": transcript, "intent": "chat"}
 
-    model = getattr(settings, "ai_model", "gemini-3.8-flash")
-    endpoint = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model}:generateContent"
+    endpoint = _get_gemini_endpoint()
     transcription = (
         f"Transcription: {json.dumps(transcript, ensure_ascii=False)}\n\n{prompt}"
     )
@@ -167,7 +178,6 @@ def _gemini_text_json(transcript: str, prompt: str) -> dict:
             response.raise_for_status()
             text = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
 
-            # Clean markdown codeblocks if Gemini adds them
             if "```" in text:
                 text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.MULTILINE)
                 text = re.sub(r"\s*```$", "", text, flags=re.MULTILINE)
@@ -183,7 +193,7 @@ def _synthesize(text: str) -> bytes:
     if not key:
         return _generate_fallback_wav()
 
-    endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions"
+    endpoint = "[https://generativelanguage.googleapis.com/v1beta/interactions](https://generativelanguage.googleapis.com/v1beta/interactions)"
     payload = {
         "model": TTS_MODEL,
         "input": [
