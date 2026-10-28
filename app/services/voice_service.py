@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 MAX_AUDIO_BYTES = 512 * 1024
 MAX_AUDIO_SECONDS = 15
 
-# Stable production model
-ACTIVE_MODEL = "gemini-1.5-flash"
+# Stable Model Fallbacks
+ACTIVE_MODEL = getattr(settings, "ai_model", "gemini-1.5-flash") or "gemini-1.5-flash"
 
 _YES_UTTERANCES = {
     "yes", "yes please", "yes do that", "yes go ahead", "please do it",
@@ -45,6 +45,8 @@ _NO_UTTERANCES = {
     "no", "nope", "cancel", "cancel it", "don't", "do not",
     "not now", "vaddu", "ledu", "kaadu", "kaadhu", "లేదు", "వద్దు", "ఆపు",
 }
+
+_RETRY_STATUS = {429, 500, 502, 503, 504}
 
 
 def _normalized_confirmation(text: str) -> str:
@@ -73,7 +75,38 @@ def _api_key() -> str:
 
 
 def _get_gemini_endpoint() -> str:
-    return f"https://generativelanguage.googleapis.com/v1beta/models/{ACTIVE_MODEL}:generateContent"
+    model = (getattr(settings, "ai_model", "") or "").strip() or ACTIVE_MODEL
+    if model.startswith("models/"):
+        model = model.replace("models/", "")
+    return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+
+def _post_with_retry(endpoint: str, payload: dict, attempts: int = 2) -> httpx.Response:
+    """Retries only on 429, 5xx server high-demand errors."""
+    for attempt in range(attempts):
+        last = (attempt == attempts - 1)
+        try:
+            with httpx.Client(timeout=httpx.Timeout(18.0, connect=5.0)) as client:
+                response = client.post(
+                    endpoint,
+                    headers={"x-goog-api-key": _api_key()},
+                    json=payload,
+                )
+        except (httpx.TimeoutException, httpx.TransportError):
+            if last:
+                raise
+            time.sleep(0.5 * (3 ** attempt))
+            continue
+
+        if response.status_code in _RETRY_STATUS and not last:
+            logger.warning("Retrying Gemini call after status %s", response.status_code)
+            time.sleep(0.5 * (3 ** attempt))
+            continue
+
+        response.raise_for_status()
+        return response
+
+    raise RuntimeError("Gemini retry attempts exhausted")
 
 
 def _generate_fallback_wav() -> bytes:
@@ -87,7 +120,6 @@ def _generate_fallback_wav() -> bytes:
         wav.setframerate(sample_rate)
         total_samples = int(sample_rate * duration)
         for i in range(total_samples):
-            # Double pleasant chime (523Hz C5 -> 659Hz E5)
             freq = 523.25 if i < total_samples // 2 else 659.25
             val = int(14000.0 * math.sin(2.0 * math.pi * freq * (i / sample_rate)))
             wav.writeframes(struct.pack("<h", val))
@@ -121,32 +153,18 @@ def _gemini_transcribe(audio: bytes) -> str:
         "generationConfig": {"temperature": 0.0, "maxOutputTokens": 256},
     }
 
-    for attempt in range(2):
-        try:
-            with httpx.Client(timeout=httpx.Timeout(18.0, connect=5.0)) as client:
-                response = client.post(
-                    endpoint,
-                    headers={"x-goog-api-key": key},
-                    json=payload,
-                )
-                if response.status_code == 503:
-                    time.sleep(1.0)
-                    continue
-                response.raise_for_status()
-                data = response.json()
-                
-                candidates = data.get("candidates", [])
-                if not candidates:
-                    return "hello"
-                content = candidates[0].get("content", {})
-                parts = content.get("parts", [])
-                if parts and "text" in parts[0]:
-                    transcript = parts[0]["text"].strip()
-                    if transcript:
-                        return transcript
-        except Exception as err:
-            logger.warning("Gemini transcribe attempt %d failed: %s", attempt, err)
-            time.sleep(0.5)
+    try:
+        response = _post_with_retry(endpoint, payload)
+        data = response.json()
+        candidates = data.get("candidates", [])
+        if candidates:
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if parts and "text" in parts[0]:
+                transcript = parts[0]["text"].strip()
+                if transcript:
+                    return transcript
+    except Exception as err:
+        logger.warning("Gemini transcription failed with retry: %s", err)
 
     return "hello"
 
@@ -164,29 +182,22 @@ def _gemini_text_json(transcript: str, prompt: str) -> dict:
         "contents": [{"parts": [{"text": transcription}]}],
         "generationConfig": {
             "responseMimeType": "application/json",
-            "temperature": 0.1,
             "maxOutputTokens": 300,
         },
     }
 
     try:
-        with httpx.Client(timeout=httpx.Timeout(15.0, connect=4.0)) as client:
-            response = client.post(
-                endpoint,
-                headers={"x-goog-api-key": key},
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
-            candidates = data.get("candidates", [])
-            if candidates:
-                parts = candidates[0].get("content", {}).get("parts", [])
-                if parts and "text" in parts[0]:
-                    text = parts[0]["text"].strip()
-                    if "```" in text:
-                        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.MULTILINE)
-                        text = re.sub(r"\s*```$", "", text, flags=re.MULTILINE)
-                    return json.loads(text.strip())
+        response = _post_with_retry(endpoint, payload)
+        data = response.json()
+        candidates = data.get("candidates", [])
+        if candidates:
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if parts and "text" in parts[0]:
+                text = parts[0]["text"].strip()
+                if "```" in text:
+                    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.MULTILINE)
+                    text = re.sub(r"\s*```$", "", text, flags=re.MULTILINE)
+                return json.loads(text.strip())
     except Exception as err:
         logger.warning("Companion intent parse fallback: %s", err)
 
@@ -198,8 +209,11 @@ def _synthesize(text: str) -> bytes:
     if not key:
         return _generate_fallback_wav()
 
-    # Direct reliable Gemini audio synthesis request
-    url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){ACTIVE_MODEL}:generateContent"
+    model = getattr(settings, "tts_model", "") or getattr(settings, "ai_model", "") or ACTIVE_MODEL
+    if model.startswith("models/"):
+        model = model.replace("models/", "")
+
+    url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model}:generateContent"
     payload = {
         "contents": [
             {
@@ -223,23 +237,18 @@ def _synthesize(text: str) -> bytes:
     }
 
     try:
-        with httpx.Client(timeout=httpx.Timeout(18.0, connect=5.0)) as client:
-            response = client.post(
-                url,
-                headers={"x-goog-api-key": key},
-                json=payload,
-            )
-            if response.status_code == 200:
-                data = response.json()
-                candidates = data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    for p in parts:
-                        inline = p.get("inlineData", {})
-                        if inline.get("data"):
-                            return base64.b64decode(inline["data"], validate=True)
+        response = _post_with_retry(url, payload)
+        if response.status_code == 200:
+            data = response.json()
+            candidates = data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                for p in parts:
+                    inline = p.get("inlineData", {})
+                    if inline.get("data"):
+                        return base64.b64decode(inline["data"], validate=True)
     except Exception as error:
-        logger.warning("TTS audio generation note: %s", error)
+        logger.warning("TTS generation fallback: %s", error)
 
     return _generate_fallback_wav()
 

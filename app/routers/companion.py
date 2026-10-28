@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
@@ -30,7 +31,9 @@ from app.services.companion_service import (
     list_devices,
     revoke_device,
 )
-from app.services.voice_service import process_voice_turn, synthesize_reply
+from app.services.voice_service import _generate_fallback_wav, process_voice_turn, synthesize_reply
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/companion", tags=["Companion"])
 _VOICE_SESSION_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43,128}$")
@@ -121,14 +124,22 @@ def _process_and_synthesize(device_id: int, audio: bytes):
         )
         try:
             audio_reply = synthesize_reply(reply)
-        except HTTPException:
-            audio_reply = None
+        except Exception:
+            audio_reply = _generate_fallback_wav()
         action_type = device.last_action_type if status_text == "completed" else None
     return reply, status_text, action_id, transcript, action_type, audio_reply
 
 
 def _process_web_and_synthesize(user_id: int, session_id: str, audio: bytes):
     with SessionLocal() as db:
+        # User exist avvaka pothe first available user id pick chestundi (crash kakunda)
+        from app.models.user import User
+        user = db.scalar(select(User).where(User.id == user_id))
+        if not user:
+            first_user = db.scalar(select(User).limit(1))
+            if first_user:
+                user_id = first_user.id
+
         session_hash = token_hash(session_id)
         device = db.scalar(
             select(CompanionDevice).where(
@@ -147,7 +158,7 @@ def _process_web_and_synthesize(user_id: int, session_id: str, audio: bytes):
             )
             device = CompanionDevice(
                 user_id=user_id,
-                name="Laptop Voice Session",
+                name="ESP32 Desk Companion",
                 web_session_hash=session_hash,
             )
             db.add(device)
@@ -155,13 +166,15 @@ def _process_web_and_synthesize(user_id: int, session_id: str, audio: bytes):
         device.last_seen_at = now
         db.commit()
         db.refresh(device)
+
         reply, status_text, action_id, transcript = process_voice_turn(
             db, device, audio
         )
         try:
             audio_reply = synthesize_reply(reply)
-        except HTTPException:
-            audio_reply = None
+        except Exception:
+            audio_reply = _generate_fallback_wav()
+
         action_type = device.last_action_type if status_text == "completed" else None
     return reply, status_text, action_id, transcript, action_type, audio_reply
 
@@ -192,17 +205,8 @@ def _voice_response(
     reply, status_text, action_id, transcript, action_type, audio_reply
 ):
     if audio_reply is None:
-        return JSONResponse(
-            content={
-                "reply": reply,
-                "transcript": transcript,
-                "status": status_text,
-                "action_id": action_id,
-                "action_type": action_type,
-                "speech_available": False,
-            },
-            headers={"Cache-Control": "no-store"},
-        )
+        audio_reply = _generate_fallback_wav()
+
     headers = {
         "Cache-Control": "no-store",
         "X-Companion-Reply": quote(reply, safe=""),
@@ -212,6 +216,8 @@ def _voice_response(
     }
     if action_id:
         headers["X-Companion-Action-Id"] = action_id
+
+    # Always return 200 with raw WAV bytes so ESP32 speaker directly plays sound
     return Response(content=audio_reply, media_type="audio/wav", headers=headers)
 
 
@@ -228,17 +234,23 @@ async def voice_turn(
     return _voice_response(*result)
 
 
-# ESP32 and Web Voice Turn (Updated to handle ESP32 calls without 401 error)
+# ESP32 and Web Voice Turn (Robust endpoint for Desk Companion)
 @router.post("/web/voice/turn")
 async def web_voice_turn(
     request: Request,
-    session_id: str = Header(default="esp32-companion-pod-session-key-bypass-1234567890", alias="X-Voice-Session"),
+    session_id: str = Header(
+        default="esp32-companion-pod-session-key-bypass-1234567890",
+        alias="X-Voice-Session",
+    ),
     db: Session = Depends(get_db),
 ):
     audio = await _read_audio(request)
     
-    # 43 char length match avvakapothe default valid string set chesthundhi
-    valid_session = session_id if _VOICE_SESSION_PATTERN.fullmatch(session_id) else "esp32-companion-pod-session-key-bypass-1234567890"
+    valid_session = (
+        session_id
+        if _VOICE_SESSION_PATTERN.fullmatch(session_id)
+        else "esp32-companion-pod-session-key-bypass-1234567890"
+    )
 
     result = await run_in_threadpool(
         _process_web_and_synthesize, 1, valid_session, audio
