@@ -2,6 +2,7 @@
 import json
 import logging
 import math
+import os
 import re
 import struct
 import time
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 MAX_AUDIO_BYTES = 512 * 1024
 MAX_AUDIO_SECONDS = 15
 
+# Stable models
 MODELS_LIST = [
     "gemini-2.0-flash",
     "gemini-1.5-flash",
@@ -54,9 +56,20 @@ def validate_wav(audio: bytes) -> None:
 
 
 def _api_key() -> str:
-    key = (getattr(settings, "ai_api_key", "") or "").strip()
+    # Check settings, and fallback to direct OS environment variables
+    key = (
+        getattr(settings, "ai_api_key", "")
+        or os.environ.get("AI_API_KEY", "")
+        or os.environ.get("GEMINI_API_KEY", "")
+        or os.environ.get("GOOGLE_API_KEY", "")
+        or ""
+    ).strip().strip('"').strip("'")
+    
     if not key:
-        logger.error("CRITICAL: AI_API_KEY is empty or missing in environment!")
+        logger.error("CRITICAL: AI_API_KEY is missing in both settings and os.environ!")
+    else:
+        # Safe debug: prints first 6 characters to verify key is present without exposing full key
+        logger.info("Loaded API Key prefix: %s... (len: %d)", key[:6], len(key))
     return key
 
 
@@ -77,7 +90,7 @@ def _post_gemini(payload: dict) -> dict:
                         json=payload,
                     )
                 if resp.status_code == 404:
-                    logger.warning("Model %s returned 404, attempting next model...", model)
+                    logger.warning("Model %s returned 404. Body: %s", model, resp.text[:120])
                     break
                 if resp.status_code in _RETRY_STATUS and attempt == 0:
                     time.sleep(1.0)
