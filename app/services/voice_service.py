@@ -30,7 +30,7 @@ MAX_AUDIO_BYTES = 512 * 1024
 MAX_AUDIO_SECONDS = 15
 
 ACTIVE_MODEL = "gemini-1.5-flash"
-TTS_MODEL = "gemini-2.5-flash-exp"
+TTS_MODEL = "gemini-2.5-flash-preview-tts"
 
 VALID_MODELS = [
     "gemini-1.5-flash",
