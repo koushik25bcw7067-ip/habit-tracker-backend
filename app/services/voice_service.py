@@ -30,14 +30,14 @@ MAX_AUDIO_BYTES = 512 * 1024
 MAX_AUDIO_SECONDS = 15
 
 # Normal Gemini model for transcription and intent processing.
-ACTIVE_MODEL = "gemini-2.5-flash"
+ACTIVE_MODEL = "gemini-3.5-flash-lite"
 
 # Dedicated Gemini text-to-speech model.
 TTS_MODEL = "gemini-2.5-flash-preview-tts"
 
 # These are only used for normal text/transcription requests.
 VALID_MODELS = [
-    "gemini-2.5-flash",
+    "gemini-3.5-flash-lite",
     "gemini-2.0-flash",
 ]
 
