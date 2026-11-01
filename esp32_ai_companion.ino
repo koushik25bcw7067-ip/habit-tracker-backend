@@ -261,7 +261,7 @@ static bool allocateAudioBuffer() {
     Serial.println("[MEM] Audio buffer allocated in PSRAM (15 seconds)");
   } else {
     static const size_t fallbackSizes[] = {
-        96000, 64000, 48000, 32000, 24000, 16000, 8000};
+        64000, 48000, 32000, 24000, 16000, 8000};
     for (const size_t candidate : fallbackSizes) {
       audioBuffer = static_cast<uint8_t *>(heap_caps_malloc(
           WAV_HEADER_SIZE + candidate,
@@ -486,8 +486,8 @@ static bool setupI2S() {
   micConfig.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
   micConfig.communication_format = I2S_COMM_FORMAT_STAND_I2S;
   micConfig.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-  micConfig.dma_buf_count = 8;
-  micConfig.dma_buf_len = 256;
+  micConfig.dma_buf_count = 4;
+  micConfig.dma_buf_len = 128;
   micConfig.use_apll = false;
   micConfig.tx_desc_auto_clear = false;
   micConfig.fixed_mclk = 0;
@@ -519,8 +519,8 @@ static bool setupI2S() {
   speakerConfig.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
   speakerConfig.communication_format = I2S_COMM_FORMAT_STAND_I2S;
   speakerConfig.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-  speakerConfig.dma_buf_count = 12;
-  speakerConfig.dma_buf_len = 256;
+  speakerConfig.dma_buf_count = 4;
+  speakerConfig.dma_buf_len = 128;
   speakerConfig.use_apll = false;
   speakerConfig.tx_desc_auto_clear = true;
   speakerConfig.fixed_mclk = 0;
@@ -1020,6 +1020,18 @@ void setup() {
       delay(1000);
     }
   }
+  if (!loadDeviceCredential()) {
+    drawStatus("NVS ERROR", "Device storage", ERROR_FACE);
+    while (true) {
+      delay(1000);
+    }
+  }
+  connectWiFi();
+  if (WiFi.status() == WL_CONNECTED && tlsClockReady) {
+    claimDevice();
+  }
+  printMemory("after-pairing");
+
   if (!allocateAudioBuffer()) {
     drawStatus("MEMORY ERROR", "See Serial heap info", ERROR_FACE);
     while (true) {
@@ -1030,12 +1042,6 @@ void setup() {
     drawStatus("RAM LIMITED", "Short clips only", THINK);
     delay(1200);
   }
-  if (!loadDeviceCredential()) {
-    drawStatus("NVS ERROR", "Device storage", ERROR_FACE);
-    while (true) {
-      delay(1000);
-    }
-  }
   if (!setupI2S()) {
     Serial.println("[FATAL] I2S initialization failed; check wiring");
     drawStatus("I2S ERROR", "Check wiring", ERROR_FACE);
@@ -1044,10 +1050,6 @@ void setup() {
     }
   }
 
-  connectWiFi();
-  if (WiFi.status() == WL_CONNECTED && tlsClockReady) {
-    claimDevice();
-  }
   printMemory("ready");
   if (WiFi.status() == WL_CONNECTED && tlsClockReady) {
     drawStatus("READY", "Hold TALK to speak", IDLE);
