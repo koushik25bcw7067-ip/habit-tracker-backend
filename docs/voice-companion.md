@@ -36,8 +36,10 @@ The body must be mono 16-bit PCM WAV at 16 kHz, no longer than 15 seconds, and
 at most 512 KiB. The endpoint uses the signed-in user's existing account and
 existing PostgreSQL task, habit, completion, and statistics records.
 
-When speech synthesis succeeds, the response body is WAV audio. The following
-response headers are percent-encoded UTF-8:
+The response body is always WAV audio. If server-side speech synthesis fails,
+the backend returns a short silent fallback WAV so clients can still read the
+reply and status headers. The following response headers are percent-encoded
+UTF-8:
 
 - `X-Companion-Transcript`: recognized text
 - `X-Companion-Reply`: assistant response
@@ -45,11 +47,6 @@ response headers are percent-encoded UTF-8:
   `completed`, or `cancelled`
 - `X-Companion-Action-Id`: short-lived pending action identifier, when present
 - `X-Companion-Action-Type`: action type after a completed write
-
-If server-side speech synthesis is unavailable, the response is JSON with
-`speech_available: false`, `reply`, `transcript`, `status`, and any
-`action_type`. The laptop UI falls back to browser speech synthesis where
-available and still displays the text.
 
 Writes are never executed on the first request. The assistant summarizes the
 proposed change and asks for a direct spoken yes/no. Pending actions expire
@@ -85,17 +82,29 @@ duplicate-completion checks, and achievement evaluation.
 - `GET /companion/devices` and `DELETE /companion/devices/{device_id}` require
   the user's existing Bearer token.
 
-The physical device must use a reachable HTTPS backend base URL supplied at
-provisioning time. Firmware, ESP32 pin mappings, and hardware configuration
-are intentionally not part of Phase 1.
+The physical ESP32 firmware is in `esp32_ai_companion.ino` and uses the
+existing DOIT ESP32 DevKit wiring in the project configuration. Generate a
+pairing code in Profile, set it as `PAIRING_CODE` in the sketch, and upload it.
+The device generates and saves its own credential in NVS and then uses the
+paired `/companion/voice/turn` route. Clear the pairing code from the sketch
+after it reports successful pairing; do not copy a website password or API
+token into the firmware.
+
+AI chat history is exposed through `GET /ai/conversations`,
+`POST /ai/conversations`, `GET /ai/conversations/{id}/messages`, and
+`DELETE /ai/conversations/{id}`. The optional `conversation_id` on
+`POST /ai/chat` makes successful turns persist to that user-owned thread.
+Browser voice and paired-device turns are saved to their own threads; the
+voice response includes `X-Companion-Conversation-Id` so the web UI can open
+the correct thread.
 
 ### Database and setup
 
-Migration `0004_companion_devices` adds one companion/session table. It does
-not alter the existing task, habit, completion, or user schemas. Do not run the
-migration against the existing PostgreSQL database until its current Alembic
-revision and backup have been checked and migration approval is given. No
-migration or deployment is performed by this implementation.
+Migration `0005_ai_conversations` adds the conversation and message tables and
+follows `0004_companion_devices`. It does not alter existing task, habit,
+completion, or user schemas. Before deployment, verify the production
+database's Alembic revision and create a backup, then apply migrations with
+`alembic upgrade head`.
 
 Gemini credentials (`AI_API_KEY`) are used for transcription, intent
 interpretation, and speech synthesis. No OpenAI API key is required. Do not

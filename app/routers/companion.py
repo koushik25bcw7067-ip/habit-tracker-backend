@@ -1,11 +1,10 @@
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
-from fastapi.responses import JSONResponse
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -31,6 +30,7 @@ from app.services.companion_service import (
     list_devices,
     revoke_device,
 )
+from app.services.conversation_service import get_or_create_device_conversation
 from app.services.voice_service import _generate_fallback_wav, process_voice_turn, synthesize_reply
 
 logger = logging.getLogger(__name__)
@@ -127,19 +127,20 @@ def _process_and_synthesize(device_id: int, audio: bytes):
         except Exception:
             audio_reply = _generate_fallback_wav()
         action_type = device.last_action_type if status_text == "completed" else None
-    return reply, status_text, action_id, transcript, action_type, audio_reply
+        conversation = get_or_create_device_conversation(db, device)
+    return (
+        reply,
+        status_text,
+        action_id,
+        transcript,
+        action_type,
+        audio_reply,
+        conversation.id,
+    )
 
 
 def _process_web_and_synthesize(user_id: int, session_id: str, audio: bytes):
     with SessionLocal() as db:
-        # User exist avvaka pothe first available user id pick chestundi (crash kakunda)
-        from app.models.user import User
-        user = db.scalar(select(User).where(User.id == user_id))
-        if not user:
-            first_user = db.scalar(select(User).limit(1))
-            if first_user:
-                user_id = first_user.id
-
         session_hash = token_hash(session_id)
         device = db.scalar(
             select(CompanionDevice).where(
@@ -147,22 +148,15 @@ def _process_web_and_synthesize(user_id: int, session_id: str, audio: bytes):
                 CompanionDevice.web_session_hash == session_hash,
             )
         )
-        now = datetime.now(timezone.utc)
         if device is None:
-            db.execute(
-                delete(CompanionDevice).where(
-                    CompanionDevice.user_id == user_id,
-                    CompanionDevice.web_session_hash.is_not(None),
-                    CompanionDevice.last_seen_at < now - timedelta(days=30),
-                )
-            )
             device = CompanionDevice(
                 user_id=user_id,
-                name="ESP32 Desk Companion",
+                name="Browser Voice Companion",
                 web_session_hash=session_hash,
             )
             db.add(device)
             db.flush()
+        now = datetime.now(timezone.utc)
         device.last_seen_at = now
         db.commit()
         db.refresh(device)
@@ -176,7 +170,16 @@ def _process_web_and_synthesize(user_id: int, session_id: str, audio: bytes):
             audio_reply = _generate_fallback_wav()
 
         action_type = device.last_action_type if status_text == "completed" else None
-    return reply, status_text, action_id, transcript, action_type, audio_reply
+        conversation = get_or_create_device_conversation(db, device)
+    return (
+        reply,
+        status_text,
+        action_id,
+        transcript,
+        action_type,
+        audio_reply,
+        conversation.id,
+    )
 
 
 async def _read_audio(request: Request) -> bytes:
@@ -202,7 +205,13 @@ async def _read_audio(request: Request) -> bytes:
 
 
 def _voice_response(
-    reply, status_text, action_id, transcript, action_type, audio_reply
+    reply,
+    status_text,
+    action_id,
+    transcript,
+    action_type,
+    audio_reply,
+    conversation_id,
 ):
     if audio_reply is None:
         audio_reply = _generate_fallback_wav()
@@ -213,6 +222,7 @@ def _voice_response(
         "X-Companion-Transcript": quote(transcript, safe=""),
         "X-Companion-Status": status_text,
         "X-Companion-Action-Type": action_type or "",
+        "X-Companion-Conversation-Id": str(conversation_id),
     }
     if action_id:
         headers["X-Companion-Action-Id"] = action_id
@@ -238,21 +248,14 @@ async def voice_turn(
 @router.post("/web/voice/turn")
 async def web_voice_turn(
     request: Request,
-    session_id: str = Header(
-        default="esp32-companion-pod-session-key-bypass-1234567890",
-        alias="X-Voice-Session",
-    ),
-    db: Session = Depends(get_db),
+    session_id: str = Header(alias="X-Voice-Session"),
+    user=Depends(current_user),
 ):
     audio = await _read_audio(request)
-    
-    valid_session = (
-        session_id
-        if _VOICE_SESSION_PATTERN.fullmatch(session_id)
-        else "esp32-companion-pod-session-key-bypass-1234567890"
-    )
+    if not _VOICE_SESSION_PATTERN.fullmatch(session_id):
+        raise HTTPException(status_code=400, detail="Invalid voice session")
 
     result = await run_in_threadpool(
-        _process_web_and_synthesize, 1, valid_session, audio
+        _process_web_and_synthesize, user.id, session_id, audio
     )
     return _voice_response(*result)

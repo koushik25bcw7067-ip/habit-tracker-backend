@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database.database import Base
 from app.models.companion_device import CompanionDevice
+from app.models.ai_conversation import AIConversation, AIConversationMessage
 from app.models.category import Category
 from app.models.habit import Habit
 from app.models.user import User
@@ -140,7 +141,7 @@ def test_gemini_transcription_exposes_provider_http_error(monkeypatch):
 
     assert error.value.status_code == 502
     assert error.value.detail == (
-        "Gemini transcription failed (HTTP 404): Model not found: gemini-test-model"
+        "Gemini request failed (HTTP 404): Model not found: gemini-test-model"
     )
 
 
@@ -217,6 +218,8 @@ def test_task_write_waits_for_clear_confirmation(monkeypatch):
             Habit.__table__,
             UserTask.__table__,
             CompanionDevice.__table__,
+            AIConversation.__table__,
+            AIConversationMessage.__table__,
         ],
     )
     testing_session = sessionmaker(bind=engine, autoflush=False, autocommit=False)

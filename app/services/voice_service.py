@@ -8,20 +8,31 @@ import struct
 import time
 import wave
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import Dict, Optional, Tuple
 
 import httpx
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.companion_device import CompanionDevice
+from app.schemas.companion import VoiceIntent
 from app.services.companion_service import (
     clear_pending_action,
+    execute_pending_action,
     get_voice_context,
+    prepare_action,
+    store_pending_action,
 )
+from app.services.conversation_service import (
+    append_turn,
+    get_or_create_device_conversation,
+    get_recent_context,
+)
+from app.services.statistics_service import period_statistics
 
 
 logger = logging.getLogger(__name__)
@@ -36,11 +47,6 @@ ACTIVE_MODEL = "gemini-3.5-flash-lite"
 TTS_MODEL = "gemini-2.5-flash-preview-tts"
 
 # These are only used for normal text/transcription requests.
-VALID_MODELS = [
-    "gemini-3.5-flash-lite",
-    "gemini-2.0-flash",
-]
-
 _RETRY_STATUS = {429, 500, 502, 503, 504}
 
 _YES_UTTERANCES = {
@@ -76,16 +82,26 @@ def validate_wav(audio: bytes) -> None:
 
     try:
         with wave.open(BytesIO(audio), "rb") as wav:
-            if (
-                wav.getnchannels() != 1
-                or wav.getsampwidth() != 2
-                or wav.getcomptype() != "NONE"
-                or wav.getnframes() > MAX_AUDIO_SECONDS * 16000
-            ):
-                logger.warning("Soft WAV validation applied")
+            valid_format = (
+                wav.getnchannels() == 1
+                and wav.getsampwidth() == 2
+                and wav.getframerate() == 16000
+                and wav.getcomptype() == "NONE"
+            )
+            frame_count = wav.getnframes()
+    except (wave.Error, EOFError) as error:
+        raise HTTPException(status_code=422, detail="Invalid WAV audio.") from error
 
-    except Exception as error:
-        logger.warning("Soft WAV validation bypass: %s", error)
+    if not valid_format:
+        raise HTTPException(
+            status_code=422,
+            detail="WAV audio must be uncompressed 16-bit mono at 16 kHz.",
+        )
+    if frame_count > MAX_AUDIO_SECONDS * 16000:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Audio must be {MAX_AUDIO_SECONDS} seconds or shorter.",
+        )
 
 
 def _api_key() -> str:
@@ -98,17 +114,7 @@ def _sanitize_model(model: str) -> str:
     if not model:
         return ACTIVE_MODEL
 
-    model = model.strip().replace("models/", "")
-
-    if "3.8" in model or "3.6" in model or "3-8" in model:
-        logger.warning(
-            "Invalid Gemini model %s. Using %s",
-            model,
-            ACTIVE_MODEL,
-        )
-        return ACTIVE_MODEL
-
-    return model
+    return model.strip().removeprefix("models/")
 
 
 def _get_gemini_endpoint(
@@ -142,77 +148,61 @@ def _post_with_retry(
     if not endpoint.startswith(("http://", "https://")):
         endpoint = f"https://{endpoint.lstrip('/')}"
 
-    endpoints_to_try = [endpoint]
-
-    for fallback_model in VALID_MODELS:
-        fallback_url = (
-            "https://generativelanguage.googleapis.com/"
-            f"v1beta/models/{fallback_model}:generateContent"
-        )
-
-        if fallback_url not in endpoints_to_try:
-            endpoints_to_try.append(fallback_url)
-
     last_error = None
 
-    for current_endpoint in endpoints_to_try:
-        for attempt in range(attempts):
-            try:
-                with httpx.Client(
-                    timeout=httpx.Timeout(30.0, connect=10.0)
-                ) as client:
+    if not _api_key():
+        logger.error("Gemini API key is not configured")
+        raise HTTPException(status_code=503, detail="Gemini API is not configured.")
 
-                    response = client.post(
-                        current_endpoint,
-                        headers={
-                            "x-goog-api-key": _api_key(),
-                        },
-                        json=payload,
-                    )
+    for attempt in range(attempts):
+        try:
+            response = httpx.post(
+                endpoint,
+                timeout=httpx.Timeout(30.0, connect=10.0),
+                headers={"x-goog-api-key": _api_key()},
+                json=payload,
+            )
 
-                if response.status_code in _RETRY_STATUS:
-                    last_error = response
+            response_status = getattr(response, "status_code", 200)
+            if response_status in _RETRY_STATUS and attempt < attempts - 1:
+                time.sleep(1.0 * (attempt + 1))
+                continue
 
-                    if attempt < attempts - 1:
-                        time.sleep(1.0 * (attempt + 1))
-                        continue
+            response.raise_for_status()
+            return response
 
-                    logger.warning(
-                        "Gemini model request failed: %s (%s)",
-                        current_endpoint,
-                        response.status_code,
-                    )
-                    break
-
-                response.raise_for_status()
-                return response
-
-            except (httpx.TimeoutException, httpx.TransportError) as error:
-                last_error = error
-
-                if attempt < attempts - 1:
-                    time.sleep(1.0 * (attempt + 1))
-                    continue
-
-                break
-
-            except httpx.HTTPStatusError as error:
-                last_error = error
-                logger.warning(
-                    "Gemini HTTP error: %s",
-                    error.response.text[:1000],
-                )
-                break
-
-    if isinstance(last_error, httpx.Response):
-        last_error.raise_for_status()
+        except httpx.HTTPStatusError as error:
+            last_error = error
+            logger.error(
+                "Gemini voice request failed: model=%s status=%s",
+                endpoint.rsplit("/models/", 1)[-1].split(":", 1)[0],
+                error.response.status_code,
+            )
+            break
+        except (httpx.TimeoutException, httpx.TransportError) as error:
+            last_error = error
+            if attempt < attempts - 1:
+                time.sleep(1.0 * (attempt + 1))
 
     if isinstance(last_error, httpx.HTTPStatusError):
-        raise last_error
+        response = last_error.response
+        try:
+            provider_message = response.json().get("error", {}).get("message", "")
+        except (ValueError, AttributeError):
+            provider_message = ""
+        detail = f"Gemini request failed (HTTP {response.status_code})"
+        if provider_message:
+            detail += f": {provider_message[:250]}"
+        raise HTTPException(status_code=502, detail=detail) from last_error
 
-    raise last_error or RuntimeError(
-        "Gemini request retry limit reached"
+    logger.error(
+        "Could not reach Gemini voice API: error=%s",
+        type(last_error).__name__ if last_error else "unknown",
     )
+    raise HTTPException(
+        status_code=502,
+        detail="Could not reach Gemini.",
+    ) from last_error
 
 
 # ============================================================
@@ -331,8 +321,8 @@ def _gemini_transcribe(audio: bytes) -> str:
     key = _api_key()
 
     if not key:
-        logger.error("AI_API_KEY is missing")
-        return "hello companion"
+        logger.error("Gemini API key is not configured")
+        raise HTTPException(status_code=503, detail="Gemini API is not configured.")
 
     endpoint = _get_gemini_endpoint()
 
@@ -343,6 +333,7 @@ def _gemini_transcribe(audio: bytes) -> str:
                     {
                         "text": (
                             "Transcribe the spoken audio accurately. "
+                            "Preserve Telugu script and code-switching. "
                             "Output plain transcript only, "
                             "with no markdown or quotes."
                         )
@@ -362,32 +353,18 @@ def _gemini_transcribe(audio: bytes) -> str:
         },
     }
 
-    try:
-        response = _post_with_retry(endpoint, payload)
-        data = response.json()
+    response = _post_with_retry(endpoint, payload)
+    data = response.json()
+    candidates = data.get("candidates", [])
+    if candidates:
+        parts = candidates[0].get("content", {}).get("parts", [])
+        for part in parts:
+            transcript = part.get("text", "").strip()
+            if transcript:
+                return transcript
 
-        candidates = data.get("candidates", [])
-
-        if candidates:
-            parts = (
-                candidates[0]
-                .get("content", {})
-                .get("parts", [])
-            )
-
-            for part in parts:
-                transcript = part.get("text", "").strip()
-
-                if transcript:
-                    return transcript
-
-    except Exception as error:
-        logger.exception(
-            "Gemini transcription failed: %s",
-            error,
-        )
-
-    return "hello"
+    logger.error("Gemini returned no transcription text")
+    raise HTTPException(status_code=422, detail="No speech was recognized.")
 
 
 # ============================================================
@@ -463,11 +440,8 @@ def _gemini_text_json(
     key = _api_key()
 
     if not key:
-        return {
-            "transcript": transcript,
-            "intent": "chat",
-            "reply": "Hello, how can I help you?",
-        }
+        logger.error("Gemini API key is not configured")
+        raise HTTPException(status_code=503, detail="Gemini API is not configured.")
 
     endpoint = _get_gemini_endpoint()
 
@@ -494,39 +468,22 @@ def _gemini_text_json(
         },
     }
 
-    try:
-        response = _post_with_retry(endpoint, payload)
-        data = response.json()
+    response = _post_with_retry(endpoint, payload)
+    data = response.json()
+    candidates = data.get("candidates", [])
+    if candidates:
+        parts = candidates[0].get("content", {}).get("parts", [])
+        for part in parts:
+            if "text" in part:
+                parsed = _extract_safe_json(part["text"])
+                if isinstance(parsed, dict):
+                    return parsed
 
-        candidates = data.get("candidates", [])
-
-        if candidates:
-            parts = (
-                candidates[0]
-                .get("content", {})
-                .get("parts", [])
-            )
-
-            for part in parts:
-                if "text" in part:
-                    parsed = _extract_safe_json(
-                        part["text"]
-                    )
-
-                    if isinstance(parsed, dict):
-                        return parsed
-
-    except Exception as error:
-        logger.exception(
-            "Gemini intent processing failed: %s",
-            error,
-        )
-
-    return {
-        "transcript": transcript,
-        "intent": "chat",
-        "reply": "Got it, system is online.",
-    }
+    logger.error("Gemini returned no valid voice intent response")
+    raise HTTPException(
+        status_code=502,
+        detail="Gemini returned an invalid voice response.",
+    )
 
 
 # ============================================================
@@ -679,6 +636,7 @@ def _intent_prompt(
     context: dict,
     pending_action: Optional[Dict],
     expires_at,
+    recent_messages: Optional[list[dict[str, str]]] = None,
 ) -> str:
 
     pending = ""
@@ -692,18 +650,22 @@ def _intent_prompt(
         )
 
     return (
-        "Classify the routine/habit user intent and formulate "
-        "a short natural spoken reply under 20 words. "
-
-        "Return pure JSON with keys: "
-        "transcript, intent, reply, title, description, priority. "
-
-        "Allowed intents: "
-        "chat, create_task, complete_task, list_tasks, "
-        "list_habits, confirm, cancel. "
+        "Classify the user's task or habit intent and formulate a short "
+        "natural spoken reply under 20 words. Return only a JSON object "
+        "with transcript, intent, reply, and any relevant "
+        "VoiceIntent fields: target_id, title, description, due_date, "
+        "priority, frequency, target_days, start_date, end_date, "
+        "category_id, target_value, and unit. Allowed intents are chat, "
+        "create_task, update_task, complete_task, delete_task, "
+        "complete_habit, create_habit, update_habit, list_tasks, "
+        "list_habits, weekly_progress, confirm, cancel, and unclear. "
+        "Never claim an action has been executed; actions require explicit "
+        "confirmation. "
 
         f"\nUser Data Context:\n"
         f"{json.dumps(context, ensure_ascii=False)}"
+        f"\nRecent Conversation:\n"
+        f"{json.dumps(recent_messages or [], ensure_ascii=False)}"
         f"{pending}"
     )
 
@@ -764,18 +726,18 @@ def process_voice_turn(
             "habits": [],
         }
 
+    conversation = get_or_create_device_conversation(db, device)
+    recent_messages = get_recent_context(db, conversation.id)
     prompt = _intent_prompt(
         context,
         device.pending_action,
         device.pending_action_expires_at,
+        recent_messages,
     )
 
     transcript = _gemini_transcribe(audio)
 
-    logger.info(
-        "Transcribed voice text: %s",
-        transcript,
-    )
+    logger.info("Voice transcription completed: characters=%d", len(transcript))
 
     result = _gemini_text_json(
         transcript,
@@ -783,33 +745,35 @@ def process_voice_turn(
     )
 
     if not isinstance(result, dict):
-        result = {
-            "transcript": transcript,
-            "intent": "chat",
-            "reply": "I am listening.",
-        }
-
+        raise HTTPException(
+            status_code=502,
+            detail="Gemini returned an invalid voice response.",
+        )
     result["transcript"] = transcript
-
-    intent_val = result.get("intent", "chat")
-    ai_reply = result.get("reply", "")
+    try:
+        intent = VoiceIntent.model_validate(result)
+    except ValidationError as error:
+        logger.warning("Gemini voice response did not match VoiceIntent")
+        raise HTTPException(
+            status_code=502,
+            detail="Gemini returned an invalid voice response.",
+        ) from error
 
     if device.pending_action:
-
         action_id = device.pending_action_id
         utterance = _normalized_confirmation(
             transcript
         )
 
         if (
-            intent_val == "confirm"
+            intent.intent == "confirm"
             and utterance in _YES_UTTERANCES
         ):
-            reply = "Confirmed and executed."
+            reply = execute_pending_action(db, device)
             status_text = "completed"
 
         elif (
-            intent_val == "cancel"
+            intent.intent == "cancel"
             and utterance in _NO_UTTERANCES
         ):
             clear_pending_action(db, device)
@@ -823,44 +787,57 @@ def process_voice_turn(
             )
             status_text = "confirmation_required"
 
-    elif intent_val == "chat":
-
-        reply = ai_reply.strip() or "I am listening."
+    elif intent.intent == "chat":
+        reply = (intent.reply or "I am listening.").strip()
         status_text = "replied"
         action_id = None
 
-    elif intent_val == "list_tasks":
-
+    elif intent.intent == "list_tasks":
         tasks = context.get("tasks", [])
-
+        titles = [item["title"] for item in tasks[:5]]
         reply = (
-            f"You have {len(tasks)} tasks."
+            f"You have {len(tasks)} tasks: {', '.join(titles)}."
             if tasks
             else "You have no pending tasks."
         )
-
         status_text = "replied"
         action_id = None
 
-    elif intent_val == "list_habits":
-
+    elif intent.intent == "list_habits":
         habits = context.get("habits", [])
-
+        names = [item["name"] for item in habits[:5]]
         reply = (
-            f"You have {len(habits)} active habits."
+            f"You have {len(habits)} active routines: {', '.join(names)}."
             if habits
             else "No routines found."
         )
+        status_text = "replied"
+        action_id = None
 
+    elif intent.intent == "weekly_progress":
+        today = datetime.now().date()
+        start = today - timedelta(days=today.weekday())
+        stats = period_statistics(db, device.user_id, start, today)
+        count = stats["total_completions"]
+        rate = stats["completion_rate"]
+        label = "routine" if count == 1 else "routines"
+        reply = (
+            f"This week, you completed {count} {label} with a "
+            f"{rate:.1f} percent completion rate."
+        )
         status_text = "replied"
         action_id = None
 
     else:
+        pending_action, reply = prepare_action(db, device.user_id, intent)
+        if pending_action is None:
+            status_text = "replied"
+            action_id = None
+        else:
+            action_id = store_pending_action(db, device, pending_action)
+            status_text = "confirmation_required"
 
-        reply = ai_reply.strip() or "Got your update."
-        status_text = "replied"
-        action_id = None
-
+    append_turn(db, conversation, transcript, reply[:200])
     return (
         reply[:200],
         status_text,

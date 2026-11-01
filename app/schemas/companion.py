@@ -56,6 +56,7 @@ class VoiceIntent(BaseModel):
         "cancel",
         "unclear",
     ]
+    reply: str | None = Field(default=None, max_length=1000)
     target_id: int | None = Field(default=None, gt=0)
     title: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=2000)

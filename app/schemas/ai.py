@@ -10,6 +10,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+    conversation_id: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def latest_message_must_be_from_user(self):
@@ -20,6 +21,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     source_status: str
+    conversation_id: int | None = None
 
 class NewHabitSuggestionRequest(BaseModel):
     goal: str = Field(min_length=3, max_length=500)

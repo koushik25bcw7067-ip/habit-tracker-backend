@@ -1,4 +1,4 @@
-﻿from functools import lru_cache
+from functools import lru_cache
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -11,17 +11,16 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
-    ai_api_key: str = ""
-    ai_base_url: str = Field(
-        default="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-        validation_alias=AliasChoices("AI_BASE_URL", "AI_API_URL"),
+    ai_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("AI_API_KEY"),
     )
     ai_model: str = Field(
-        default="gemini-2.0-flash",
+        default="gemini-3.5-flash-lite",
         validation_alias=AliasChoices("AI_MODEL"),
     )
     tts_model: str = Field(
-        default="gemini-2.0-flash",
+        default="gemini-2.5-flash-preview-tts",
         validation_alias=AliasChoices("TTS_MODEL"),
     )
 

@@ -63,6 +63,10 @@ def test_pairing_issues_one_time_code_and_revocable_device_token(companion_clien
     assert pairing.status_code == 201
     pairing_data = pairing.json()
     assert len(pairing_data["pairing_code"]) == 12
+    pending = client.get("/companion/devices")
+    assert pending.status_code == 200
+    assert pending.json()[0]["id"] == pairing_data["device_id"]
+    assert pending.json()[0]["paired_at"] is None
 
     credential = secrets.token_urlsafe(32)
     claimed = client.post(
@@ -81,6 +85,27 @@ def test_pairing_issues_one_time_code_and_revocable_device_token(companion_clien
         assert device is not None
         assert device.credential_hash == token_hash(credential)
         assert device.credential_hash != credential
+
+        with testing_session() as db:
+            device = db.get(CompanionDevice, pairing_data["device_id"])
+            device.pairing_expires_at = datetime(2000, 1, 1, tzinfo=timezone.utc)
+            db.commit()
+        retry_claim = client.post(
+            "/companion/claim",
+            json={
+                "pairing_code": pairing_data["pairing_code"],
+                "credential": credential,
+            },
+        )
+        assert retry_claim.status_code == 200
+        rejected_reclaim = client.post(
+            "/companion/claim",
+            json={
+                "pairing_code": pairing_data["pairing_code"],
+                "credential": secrets.token_urlsafe(32),
+            },
+        )
+        assert rejected_reclaim.status_code == 409
 
     listed = client.get("/companion/devices")
     assert listed.status_code == 200
@@ -104,6 +129,7 @@ def test_claim_rejects_expired_pairing_code(companion_client):
         device = db.get(CompanionDevice, pairing["device_id"])
         device.pairing_expires_at = datetime(2000, 1, 1, tzinfo=timezone.utc)
         db.commit()
+    assert client.get("/companion/devices").json() == []
 
     response = client.post(
         "/companion/claim",

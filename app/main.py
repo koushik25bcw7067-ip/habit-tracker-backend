@@ -36,6 +36,8 @@ from app.models import (
     UserTheme,
     UserTask,
     CompanionDevice,
+    AIConversation,
+    AIConversationMessage,
 )
 
 from app.routers.day_plans import router as day_plans_router
@@ -67,6 +69,7 @@ app.add_middleware(
         "X-Companion-Status",
         "X-Companion-Action-Id",
         "X-Companion-Action-Type",
+        "X-Companion-Conversation-Id",
     ],
 )
 

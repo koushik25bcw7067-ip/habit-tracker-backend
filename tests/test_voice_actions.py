@@ -16,6 +16,7 @@ from app.database.dependencies import get_db
 from app.main import app
 from app.models.achievement import Achievement, UserAchievement
 from app.models.category import Category
+from app.models.ai_conversation import AIConversation, AIConversationMessage
 from app.models.companion_device import CompanionDevice
 from app.models.completion import HabitCompletion
 from app.models.habit import Habit
@@ -52,6 +53,8 @@ def voice_client(monkeypatch):
         Achievement.__table__,
         UserAchievement.__table__,
         CompanionDevice.__table__,
+        AIConversation.__table__,
+        AIConversationMessage.__table__,
     ]
     Base.metadata.create_all(bind=engine, tables=tables)
     testing_session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -318,6 +321,7 @@ def test_laptop_voice_endpoint_requires_authenticated_session_and_returns_transc
         "Create%20a%20task%20to%20review%20notes"
     )
     assert first.headers["x-companion-status"] == "confirmation_required"
+    conversation_id = first.headers["x-companion-conversation-id"]
     assert first.content == b"fake wav"
 
     second = client.post("/companion/web/voice/turn", headers=headers, content=make_wav())
@@ -325,10 +329,27 @@ def test_laptop_voice_endpoint_requires_authenticated_session_and_returns_transc
     assert second.headers["x-companion-transcript"] == "Yes%20please"
     assert second.headers["x-companion-status"] == "completed"
     assert second.headers["x-companion-action-type"] == "create_task"
+    assert second.headers["x-companion-conversation-id"] == conversation_id
     with testing_session() as db:
         task = db.scalar(select(UserTask).where(UserTask.title == "Review notes"))
         assert task is not None
+        conversation = db.get(AIConversation, int(conversation_id))
+        assert conversation is not None
+        assert conversation.user_id == 1
+        assert db.query(AIConversationMessage).filter_by(
+            conversation_id=conversation.id
+        ).count() == 4
 
     changes = client.get("/companion/changes")
     assert changes.status_code == 200
     assert changes.json()["action_type"] == "create_task"
+
+
+def test_browser_voice_requires_a_voice_session_header(voice_client):
+    client, _, _ = voice_client
+    response = client.post(
+        "/companion/web/voice/turn",
+        headers={"Content-Type": "audio/wav"},
+        content=make_wav(),
+    )
+    assert response.status_code == 422

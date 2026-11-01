@@ -25,6 +25,8 @@ The backend is the source of truth for numerical statistics. AI receives verifie
 - AI analysis, weekly/monthly reports and new-habit suggestions
 - Authenticated laptop voice commands with Gemini audio transcription and a
 paired-device companion API
+- User-scoped AI conversation history shared by website chat, browser voice,
+  and paired hardware
 - Swagger/OpenAPI
 - Alembic migrations
 - Seed data and tests
@@ -118,23 +120,30 @@ notice, and manual test checklist are documented in
 
 ## AI configuration
 
-AI is optional. The application works without it.
+Gemini powers AI chat and voice. Habit tracking and rule-based features still
+work without an AI key.
 
 Set:
 
 ```env
-AI_API_KEY=your_key
-AI_API_URL=https://api.openai.com/v1/chat/completions
-AI_MODEL=gpt-4o-mini
+AI_API_KEY=your_google_ai_studio_key
+AI_MODEL=gemini-3.5-flash-lite
 ```
 
 The AI service sends only calculated habit statistics and related non-authentication data. It never receives passwords, JWTs or API keys.
 
-If AI is unavailable, habit tracking, statistics and rule-based recommendations continue working.
+Gemini requests use the native `generateContent` API. Do not set `AI_API_URL` or
+`AI_BASE_URL`; those legacy endpoint overrides are not used.
 
 Voice transcription, intent interpretation, and spoken replies use the
 backend's existing Gemini `AI_API_KEY`. No OpenAI API key is required. Do not
 expose provider keys in the frontend.
+
+Website chat threads are stored per signed-in user. Browser voice conversations
+and each paired hardware device have their own saved thread, visible in the AI
+Companion sidebar. The `0005_ai_conversations` migration adds the conversation
+and message tables; apply it with `alembic upgrade head` before deploying these
+routes.
 
 ## Consistency score
 

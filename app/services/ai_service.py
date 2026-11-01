@@ -1,7 +1,9 @@
 import json
+import logging
 import httpx
 from datetime import date, timedelta
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,6 +14,9 @@ from app.services.statistics_service import (
     period_statistics,
     habit_statistics,
 )
+
+logger = logging.getLogger(__name__)
+GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 
 class AIService:
@@ -25,20 +30,14 @@ class AIService:
             or ""
         ).strip()
 
-        self.base_url = (
-            getattr(settings, "ai_base_url", "")
-            or getattr(settings, "ai_api_url", "")
-            or getattr(settings, "AI_API_URL", "")
-            or "https://generativelanguage.googleapis.com/v1beta/chat/completions"
-        ).rstrip("/")
-
-        self.endpoint = self.base_url
-
         self.model = (
             getattr(settings, "ai_model", "")
             or getattr(settings, "AI_MODEL", "")
-            or "gemini-2.5-flash"
+            or "gemini-3.5-flash-lite"
         ).strip()
+        self.endpoint = (
+            f"{GEMINI_API_BASE_URL}/models/{self.model}:generateContent"
+        )
 
     def verified_context(self, days=30):
         end = date.today()
@@ -99,55 +98,6 @@ class AIService:
             "source_status": reason,
         }
 
-    def _chat_fallback(self, messages, context, reason):
-        p = context.get("period", {})
-
-        completion = p.get("completion_rate", 0)
-        streak = p.get("longest_streak", 0)
-        trend = p.get("trend_vs_previous_period", 0)
-
-        last = ""
-
-        if messages:
-            last_msg = messages[-1]
-
-            if isinstance(last_msg, dict):
-                last = last_msg.get("content", "")
-            else:
-                last = getattr(last_msg, "content", "")
-
-            last = str(last).lower()
-
-        if "missed" in last or "skip" in last:
-            reply = (
-                f"Missing a day happens — your verified completion "
-                f"rate is {completion}% over the last 30 days. "
-                f"Don't worry about the gap; focus on today's target."
-            )
-        elif (
-            "consisten" in last
-            or "worse" in last
-            or "trend" in last
-        ):
-            reply = (
-                f"Your completion rate changed by {trend} "
-                f"percentage points compared to the last period. "
-                f"Try reducing your daily load to one core routine "
-                f"for the next few days."
-            )
-        else:
-            reply = (
-                f"Your verified stats show a {completion}% "
-                f"completion rate over the last 30 days, "
-                f"with a top streak of {streak} days. "
-                f"What routine do you want to work on today?"
-            )
-
-        return {
-            "reply": reply,
-            "source_status": reason,
-        }
-
     def _build_system_prompt(self, context, persona=""):
         return (
             "You are a friendly personal AI companion inside a routine "
@@ -176,28 +126,92 @@ class AIService:
         )
 
     def _request_ai(self, messages, temperature=0.5):
-        """Send a request through the existing Gemini-compatible API."""
+        """Send a request using Gemini's native generateContent protocol."""
+        if not self.api_key:
+            logger.error("Gemini API key is not configured")
+            raise HTTPException(
+                status_code=503,
+                detail="Gemini API is not configured.",
+            )
+
+        system_parts = []
+        contents = []
+        for message in messages:
+            role = message["role"]
+            content = str(message["content"])
+            if role == "system":
+                system_parts.append(content)
+            else:
+                contents.append(
+                    {
+                        "role": "model" if role == "assistant" else "user",
+                        "parts": [{"text": content}],
+                    }
+                )
+
+        if not contents:
+            raise ValueError("Gemini request must contain a user message.")
+
+        body = {
+            "contents": contents,
+            "generationConfig": {"temperature": temperature},
+        }
+        if system_parts:
+            body["systemInstruction"] = {
+                "parts": [{"text": "\n\n".join(system_parts)}]
+            }
+
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "x-goog-api-key": self.api_key,
             "Content-Type": "application/json",
         }
 
-        body = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-        }
-
-        with httpx.Client(timeout=30) as client:
-            response = client.post(
-                self.endpoint,
-                headers=headers,
-                json=body,
+        try:
+            with httpx.Client(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+                response = client.post(
+                    self.endpoint,
+                    headers=headers,
+                    json=body,
+                )
+                response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPStatusError as error:
+            logger.error(
+                "Gemini request failed: model=%s status=%s",
+                self.model,
+                error.response.status_code,
             )
-            response.raise_for_status()
+            raise HTTPException(
+                status_code=502,
+                detail=f"Gemini request failed (HTTP {error.response.status_code}).",
+            ) from error
+        except httpx.HTTPError as error:
+            logger.error(
+                "Could not reach Gemini: model=%s error=%s",
+                self.model,
+                type(error).__name__,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="Could not reach Gemini.",
+            ) from error
 
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
+        candidates = data.get("candidates", [])
+        if candidates:
+            parts = candidates[0].get("content", {}).get("parts", [])
+            text = "".join(
+                part.get("text", "")
+                for part in parts
+                if isinstance(part.get("text"), str)
+            ).strip()
+            if text:
+                return text
+
+        logger.error("Gemini returned no text candidate: model=%s", self.model)
+        raise HTTPException(
+            status_code=502,
+            detail="Gemini returned an empty response.",
+        )
 
     @staticmethod
     def _parse_json(text):
@@ -349,8 +363,9 @@ Requirements:
         context = self.verified_context(30)
 
         if not self.api_key:
-            return self._chat_fallback(
-                messages, context, "ai_not_configured"
+            raise HTTPException(
+                status_code=503,
+                detail="Gemini API is not configured.",
             )
 
         system_prompt = self._build_system_prompt(context, persona)
@@ -382,14 +397,14 @@ Requirements:
                 "source_status": "ai",
             }
 
-        except Exception as e:
-            print(
-                f"DEBUG GEMINI AI ERROR: "
-                f"{type(e).__name__} - {e}"
-            )
-            return self._chat_fallback(
-                messages, context, "ai_unavailable"
-            )
+        except HTTPException:
+            raise
+        except (KeyError, TypeError, ValueError) as error:
+            logger.exception("Could not parse Gemini chat response")
+            raise HTTPException(
+                status_code=502,
+                detail="Gemini returned an invalid response.",
+            ) from error
 
     def analyze(self, days=30):
         context = self.verified_context(days)

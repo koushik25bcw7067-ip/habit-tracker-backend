@@ -75,34 +75,32 @@ def claim_device(db: Session, data: DeviceClaim, requester_key: str) -> Companio
             CompanionDevice.revoked_at.is_(None),
         )
     ).all()
-    device = next(
-        (
-            item
-            for item in candidates
-            if item.pairing_expires_at
-            and (
-                item.pairing_expires_at.replace(tzinfo=timezone.utc)
-                if item.pairing_expires_at.tzinfo is None
-                else item.pairing_expires_at
+    device = None
+    for candidate in candidates:
+        if not constant_time_hash_matches(
+            data.pairing_code, candidate.pairing_code_hash or ""
+        ):
+            continue
+        if candidate.paired_at is not None:
+            if candidate.credential_hash and constant_time_hash_matches(
+                data.credential, candidate.credential_hash
+            ):
+                return candidate
+            raise HTTPException(
+                status_code=409, detail="Device has already been paired"
             )
-            > now
-            and constant_time_hash_matches(
-                data.pairing_code, item.pairing_code_hash or ""
-            )
-        ),
-        None,
-    )
+        expires_at = candidate.pairing_expires_at
+        if expires_at and (
+            expires_at.replace(tzinfo=timezone.utc)
+            if expires_at.tzinfo is None
+            else expires_at
+        ) > now:
+            device = candidate
+            break
     if device is None:
         raise HTTPException(status_code=401, detail="Pairing code is invalid or expired")
 
     digest = token_hash(data.credential)
-    if device.paired_at is not None:
-        if not device.credential_hash or not constant_time_hash_matches(
-            data.credential, device.credential_hash
-        ):
-            raise HTTPException(status_code=409, detail="Device has already been paired")
-        return device
-
     device.credential_hash = digest
     device.paired_at = now
     db.commit()
@@ -115,7 +113,11 @@ def list_devices(db: Session, user_id: int) -> list[CompanionDevice]:
         select(CompanionDevice)
         .where(
             CompanionDevice.user_id == user_id,
-            CompanionDevice.credential_hash.is_not(None),
+            CompanionDevice.revoked_at.is_(None),
+            (
+                CompanionDevice.credential_hash.is_not(None)
+                | (CompanionDevice.pairing_expires_at > datetime.now(timezone.utc))
+            ),
         )
         .order_by(CompanionDevice.created_at.desc())
     ).all()
