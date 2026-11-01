@@ -82,6 +82,7 @@ static size_t pcmCapacityBytes = 0;
 static char deviceCredential[129] = {};
 static char pendingCredential[65] = {};
 static int32_t micSamples[256];
+static bool micRawLogged = false;
 static uint8_t playbackInput[1024];
 static int16_t playbackOutput[1024];
 
@@ -321,6 +322,22 @@ static bool loadDeviceCredential() {
 
 static String readErrorBody(HTTPClient &http);
 
+static void logHttpsFailure(const char *operation, int statusCode,
+                            WiFiClientSecure &client) {
+  char tlsError[128] = {};
+  const int tlsErrorCode = client.lastError(tlsError, sizeof(tlsError));
+  Serial.printf(
+      "[HTTPS ERR] %s: %s (%d); WiFi=%d RSSI=%d time=%lu TLS=%d %s\n",
+      operation,
+      HTTPClient::errorToString(statusCode).c_str(),
+      statusCode,
+      static_cast<int>(WiFi.status()),
+      WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0,
+      static_cast<unsigned long>(time(nullptr)),
+      tlsErrorCode,
+      tlsError[0] ? tlsError : "no TLS detail");
+}
+
 static bool claimDevice() {
   if (deviceCredential[0] != '\0') {
     return true;
@@ -362,12 +379,14 @@ static bool claimDevice() {
   }
 
   WiFiClientSecure client;
-  client.setCACert(GTS_ROOT_R4);
+  client.useBuiltinCACertBundle();
   HTTPClient http;
   http.setReuse(false);
   http.setTimeout(15000);
+  http.setConnectTimeout(20000);
   if (!http.begin(client, CLAIM_URL)) {
     Serial.println("[PAIR ERR] HTTPS claim setup failed");
+    logHttpsFailure("claim begin", HTTPC_ERROR_CONNECTION_REFUSED, client);
     return false;
   }
   http.addHeader("Content-Type", "application/json");
@@ -378,6 +397,7 @@ static bool claimDevice() {
   const int statusCode = http.POST(payload);
   if (statusCode != HTTP_CODE_OK) {
     Serial.printf("[PAIR ERR] Claim request failed: HTTP %d\n", statusCode);
+    logHttpsFailure("claim POST", statusCode, client);
     String body = readErrorBody(http);
     if (body.length()) {
       Serial.printf("[PAIR ERR] %.160s\n", body.c_str());
@@ -445,6 +465,7 @@ static bool connectWiFi() {
     if (WiFi.status() == WL_CONNECTED) {
       Serial.printf("[WIFI] Connected. IP: %s\n",
                     WiFi.localIP().toString().c_str());
+      Serial.printf("[WIFI] RSSI=%d dBm\n", WiFi.RSSI());
       syncClock();
       return true;
     }
@@ -536,6 +557,11 @@ static bool recordAudio(size_t &sampleCount, int &peak, bool &cancelled) {
   int maxPeak = 0;
   int64_t dcSum = 0;
   uint32_t dcCount = 0;
+  uint32_t rawPeakLeft = 0;
+  uint32_t rawPeakRight = 0;
+  int32_t firstRawLeft = 0;
+  int32_t firstRawRight = 0;
+  bool haveFirstRaw = false;
   uint32_t lastPressed = millis();
   cancelled = false;
   i2s_zero_dma_buffer(I2S_MIC_PORT);
@@ -562,29 +588,51 @@ static bool recordAudio(size_t &sampleCount, int &peak, bool &cancelled) {
 
     const size_t frames = bytesRead / (2 * sizeof(int32_t));
     for (size_t i = 0; i < frames && count < pcmCapacityBytes / 2; ++i) {
-      const int32_t left = micSamples[2 * i] >> 8;
-      const int32_t right = micSamples[2 * i + 1] >> 8;
-      const int32_t selected =
-          (abs(left) > abs(right)) ? left : right;
-      dcSum += selected;
-      ++dcCount;
-      int32_t value = selected >> 8;
-      value = constrain(value, -32768, 32767);
-      microphonePcm[count++] = static_cast<int16_t>(value);
-      const int magnitude = abs(static_cast<int>(value));
-      if (magnitude > maxPeak) {
-        maxPeak = magnitude;
+      const int32_t rawLeft = micSamples[2 * i];
+      const int32_t rawRight = micSamples[2 * i + 1];
+      if (!haveFirstRaw) {
+        firstRawLeft = rawLeft;
+        firstRawRight = rawRight;
+        haveFirstRaw = true;
       }
+      const uint32_t leftMagnitude = static_cast<uint32_t>(
+          rawLeft < 0 ? -static_cast<int64_t>(rawLeft) : rawLeft);
+      const uint32_t rightMagnitude = static_cast<uint32_t>(
+          rawRight < 0 ? -static_cast<int64_t>(rawRight) : rawRight);
+      rawPeakLeft = max(rawPeakLeft, leftMagnitude);
+      rawPeakRight = max(rawPeakRight, rightMagnitude);
+
+      const int32_t left = rawLeft >> 14;
+      const int32_t right = rawRight >> 14;
+      const int32_t selected = (abs(left) > abs(right)) ? left : right;
+      const int32_t value = constrain(selected, -32768, 32767);
+      dcSum += value;
+      ++dcCount;
+      microphonePcm[count++] = static_cast<int16_t>(value);
     }
     yield();
   }
 
+  if (!micRawLogged && haveFirstRaw) {
+    Serial.printf(
+        "[MIC RAW] first L=%ld R=%ld; peak L=%u R=%u; converted shift=14\n",
+        static_cast<long>(firstRawLeft),
+        static_cast<long>(firstRawRight),
+        static_cast<unsigned>(rawPeakLeft),
+        static_cast<unsigned>(rawPeakRight));
+    micRawLogged = true;
+  }
+
   if (dcCount) {
-    const int32_t dc = static_cast<int32_t>((dcSum / dcCount) >> 8);
+    const int32_t dc = static_cast<int32_t>(dcSum / dcCount);
     for (size_t i = 0; i < count; ++i) {
       int32_t value = static_cast<int32_t>(microphonePcm[i]) - dc;
       value = constrain(value, -32768, 32767);
       microphonePcm[i] = static_cast<int16_t>(value);
+      const int magnitude = abs(value);
+      if (magnitude > maxPeak) {
+        maxPeak = magnitude;
+      }
     }
   }
 
@@ -838,7 +886,7 @@ static bool sendVoice(size_t samples) {
   drawStatus("THINKING", "Contacting companion", THINK);
 
   WiFiClientSecure client;
-  client.setCACert(GTS_ROOT_R4);
+  client.useBuiltinCACertBundle();
   HTTPClient http;
   http.setReuse(false);
   http.setTimeout(HTTP_TIMEOUT_MS);
@@ -849,6 +897,7 @@ static bool sendVoice(size_t samples) {
                           sizeof(responseHeaderNames[0]));
   if (!http.begin(client, BACKEND_URL)) {
     Serial.println("[HTTP ERR] HTTPS begin failed");
+    logHttpsFailure("voice begin", HTTPC_ERROR_CONNECTION_REFUSED, client);
     drawStatus("HTTPS ERROR", "Connection setup", ERROR_FACE);
     return false;
   }
@@ -886,6 +935,7 @@ static bool sendVoice(size_t samples) {
                          actionId);
     Serial.printf("[PLAY] result=%s\n", played ? "complete" : "stopped/error");
   } else {
+    logHttpsFailure("voice POST", statusCode, client);
     const String errorBody = readErrorBody(http);
     Serial.printf("[HTTP ERR] status=%d body=%.180s\n", statusCode,
                   errorBody.c_str());
