@@ -10,6 +10,7 @@
 #include <esp_heap_caps.h>
 #include <esp_system.h>
 #include <time.h>
+#include <sys/time.h>
 
 // Configure these locally. Never commit real Wi-Fi credentials.
 #define WIFI_SSID "YOUR_WIFI_SSID"
@@ -76,6 +77,7 @@ static bool micReady = false;
 static bool speakerReady = false;
 static bool processing = false;
 static bool tlsClockReady = false;
+static bool ntpConfigured = false;
 static uint8_t *audioBuffer = nullptr;
 static int16_t *microphonePcm = nullptr;
 static size_t pcmCapacityBytes = 0;
@@ -427,20 +429,65 @@ static bool claimDevice() {
   return true;
 }
 
-static bool syncClock() {
-  configTime(0, 0, "pool.ntp.org", "time.google.com");
-  const uint32_t started = millis();
-  while (millis() - started < 15000) {
-    if (time(nullptr) > 1704067200) {
-      tlsClockReady = true;
-      Serial.println("[TIME] NTP time synchronized");
-      return true;
+static time_t firmwareBuildTime() {
+  static const char *months[] = {
+      "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  char monthName[4] = {};
+  memcpy(monthName, __DATE__, 3);
+
+  struct tm buildTime = {};
+  for (int month = 0; month < 12; ++month) {
+    if (strcmp(monthName, months[month]) == 0) {
+      buildTime.tm_mon = month;
+      break;
     }
-    delay(250);
   }
-  tlsClockReady = false;
-  Serial.println("[TIME ERR] NTP time unavailable; HTTPS certificate checks need time");
-  return false;
+  buildTime.tm_mday = atoi(__DATE__ + 4);
+  buildTime.tm_year = atoi(__DATE__ + 7) - 1900;
+  buildTime.tm_hour = (__TIME__[0] - '0') * 10 + (__TIME__[1] - '0');
+  buildTime.tm_min = (__TIME__[3] - '0') * 10 + (__TIME__[4] - '0');
+  buildTime.tm_sec = (__TIME__[6] - '0') * 10 + (__TIME__[7] - '0');
+  buildTime.tm_isdst = 0;
+  setenv("TZ", "UTC0", 1);
+  tzset();
+  return mktime(&buildTime);
+}
+
+static bool syncClock() {
+  const time_t minimumTlsTime = 1704067200;
+  time_t now = time(nullptr);
+  if (now < minimumTlsTime) {
+    const time_t buildTime = firmwareBuildTime();
+    if (buildTime < minimumTlsTime) {
+      Serial.printf(
+          "[TIME ERR] Invalid clock and firmware build date: %s %s\n",
+          __DATE__, __TIME__);
+      tlsClockReady = false;
+      return false;
+    }
+    struct timeval clockValue = {.tv_sec = buildTime, .tv_usec = 0};
+    if (settimeofday(&clockValue, nullptr) != 0) {
+      Serial.println("[TIME ERR] Could not initialize system clock");
+      tlsClockReady = false;
+      return false;
+    }
+    now = time(nullptr);
+    Serial.printf(
+        "[TIME] Initialized from firmware build timestamp: %s %s UTC\n",
+        __DATE__, __TIME__);
+  }
+
+  if (!ntpConfigured) {
+    configTime(0, 0, "pool.ntp.org", "time.google.com",
+               "time.cloudflare.com");
+    ntpConfigured = true;
+    Serial.println("[TIME] SNTP started; system clock is usable while it syncs");
+  }
+  tlsClockReady = now >= minimumTlsTime;
+  Serial.printf("[TIME] Clock ready for verified HTTPS; epoch=%lu\n",
+                static_cast<unsigned long>(now));
+  return tlsClockReady;
 }
 
 static bool connectWiFi() {
