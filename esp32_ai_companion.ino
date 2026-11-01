@@ -244,6 +244,14 @@ static void printMemory(const char *tag) {
 }
 
 static bool allocateAudioBuffer() {
+  const size_t freeInternal =
+      heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  const size_t largestInternal =
+      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  Serial.printf("[MEM] Before audio allocation: free_internal=%u largest_internal=%u\n",
+                static_cast<unsigned>(freeInternal),
+                static_cast<unsigned>(largestInternal));
+
   audioBuffer = static_cast<uint8_t *>(heap_caps_malloc(
       WAV_HEADER_SIZE + MAX_PCM_BYTES,
       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -251,21 +259,42 @@ static bool allocateAudioBuffer() {
     pcmCapacityBytes = MAX_PCM_BYTES;
     Serial.println("[MEM] Audio buffer allocated in PSRAM (15 seconds)");
   } else {
-    pcmCapacityBytes = 96000;
-    audioBuffer = static_cast<uint8_t *>(
-        heap_caps_malloc(WAV_HEADER_SIZE + pcmCapacityBytes, MALLOC_CAP_8BIT));
+    static const size_t fallbackSizes[] = {
+        96000, 64000, 48000, 32000, 24000, 16000, 8000};
+    for (const size_t candidate : fallbackSizes) {
+      audioBuffer = static_cast<uint8_t *>(heap_caps_malloc(
+          WAV_HEADER_SIZE + candidate,
+          MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+      if (audioBuffer) {
+        pcmCapacityBytes = candidate;
+        break;
+      }
+    }
     if (!audioBuffer) {
-      Serial.println("[MEM ERR] Unable to allocate audio buffer");
+      const size_t freeNow =
+          heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+      const size_t largestNow =
+          heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+      Serial.printf(
+          "[MEM ERR] Audio allocation failed: free_internal=%u largest_internal=%u\n",
+          static_cast<unsigned>(freeNow),
+          static_cast<unsigned>(largestNow));
       return false;
     }
-    if (!claimDevice()) {
-      drawStatus("PAIR DEVICE", "Set code from Profile", ERROR_FACE);
-      return false;
-    }
-    Serial.println("[MEM] PSRAM unavailable; using 3 seconds of internal RAM");
+    const uint32_t seconds =
+        static_cast<uint32_t>(pcmCapacityBytes / (MIC_RATE * 2UL));
+    Serial.printf(
+        "[MEM] PSRAM unavailable; using %u bytes internal RAM (~%u sec)\n",
+        static_cast<unsigned>(pcmCapacityBytes),
+        static_cast<unsigned>(seconds));
   }
   microphonePcm =
       reinterpret_cast<int16_t *>(audioBuffer + WAV_HEADER_SIZE);
+  Serial.printf(
+      "[MEM] Audio buffer ready: pcm_capacity=%u bytes; largest_internal_after=%u\n",
+      static_cast<unsigned>(pcmCapacityBytes),
+      static_cast<unsigned>(heap_caps_get_largest_free_block(
+          MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
   return true;
 }
 
@@ -942,10 +971,14 @@ void setup() {
     }
   }
   if (!allocateAudioBuffer()) {
-    drawStatus("MEMORY ERROR", "Audio buffer", ERROR_FACE);
+    drawStatus("MEMORY ERROR", "See Serial heap info", ERROR_FACE);
     while (true) {
       delay(1000);
     }
+  }
+  if (pcmCapacityBytes < MAX_PCM_BYTES) {
+    drawStatus("RAM LIMITED", "Short clips only", THINK);
+    delay(1200);
   }
   if (!loadDeviceCredential()) {
     drawStatus("NVS ERROR", "Device storage", ERROR_FACE);
