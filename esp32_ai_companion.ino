@@ -580,8 +580,7 @@ static void normalizeAudio(size_t samples, int peak) {
   }
 }
 
-template <typename StreamClient>
-static bool readExact(StreamClient *stream, uint8_t *destination,
+static bool readExact(NetworkClient *stream, uint8_t *destination,
                       size_t wanted, HTTPClient &http, uint32_t timeoutMs) {
   size_t received = 0;
   const uint32_t started = millis();
@@ -752,7 +751,9 @@ static bool playResponseAudio(HTTPClient &http) {
 
 static String decodeHeader(const String &encoded) {
   String decoded;
-  decoded.reserve(min(static_cast<size_t>(encoded.length()), 512UL));
+  const size_t reserveLength =
+      encoded.length() < 512 ? encoded.length() : 512;
+  decoded.reserve(reserveLength);
   for (size_t i = 0; i < encoded.length() && decoded.length() < 512; ++i) {
     if (encoded[i] == '%' && i + 2 < encoded.length()) {
       char hex[3] = {encoded[i + 1], encoded[i + 2], '\0'};
