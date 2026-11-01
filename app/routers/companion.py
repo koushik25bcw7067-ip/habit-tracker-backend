@@ -31,7 +31,12 @@ from app.services.companion_service import (
     revoke_device,
 )
 from app.services.conversation_service import get_or_create_device_conversation
-from app.services.voice_service import _generate_fallback_wav, process_voice_turn, synthesize_reply
+from app.services.voice_service import (
+    _generate_fallback_wav,
+    is_fallback_wav,
+    process_voice_turn,
+    synthesize_reply,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +129,10 @@ def _process_and_synthesize(device_id: int, audio: bytes):
         )
         try:
             audio_reply = synthesize_reply(reply)
+            audio_mode = "fallback" if is_fallback_wav(audio_reply) else "tts"
         except Exception:
             audio_reply = _generate_fallback_wav()
+            audio_mode = "fallback"
         action_type = device.last_action_type if status_text == "completed" else None
         conversation = get_or_create_device_conversation(db, device)
     return (
@@ -135,6 +142,7 @@ def _process_and_synthesize(device_id: int, audio: bytes):
         transcript,
         action_type,
         audio_reply,
+        audio_mode,
         conversation.id,
     )
 
@@ -166,8 +174,10 @@ def _process_web_and_synthesize(user_id: int, session_id: str, audio: bytes):
         )
         try:
             audio_reply = synthesize_reply(reply)
+            audio_mode = "fallback" if is_fallback_wav(audio_reply) else "tts"
         except Exception:
             audio_reply = _generate_fallback_wav()
+            audio_mode = "fallback"
 
         action_type = device.last_action_type if status_text == "completed" else None
         conversation = get_or_create_device_conversation(db, device)
@@ -178,6 +188,7 @@ def _process_web_and_synthesize(user_id: int, session_id: str, audio: bytes):
         transcript,
         action_type,
         audio_reply,
+        audio_mode,
         conversation.id,
     )
 
@@ -211,10 +222,12 @@ def _voice_response(
     transcript,
     action_type,
     audio_reply,
+    audio_mode,
     conversation_id,
 ):
     if audio_reply is None:
         audio_reply = _generate_fallback_wav()
+        audio_mode = "fallback"
 
     headers = {
         "Cache-Control": "no-store",
@@ -223,6 +236,7 @@ def _voice_response(
         "X-Companion-Status": status_text,
         "X-Companion-Action-Type": action_type or "",
         "X-Companion-Conversation-Id": str(conversation_id),
+        "X-Companion-Audio-Mode": audio_mode,
     }
     if action_id:
         headers["X-Companion-Action-Id"] = action_id

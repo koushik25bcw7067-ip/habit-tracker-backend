@@ -96,6 +96,7 @@ static const char *responseHeaderNames[] = {
     "X-Companion-Action-Type",
     "X-Companion-Action-Id",
     "X-Companion-Conversation-Id",
+    "X-Companion-Audio-Mode",
 };
 
 static void put16(uint8_t *data, uint16_t value) {
@@ -957,6 +958,7 @@ static bool sendVoice(size_t samples) {
                 http.getSize());
 
   bool played = false;
+  bool fallbackAudio = false;
   if (statusCode == HTTP_CODE_OK) {
     const String contentType = http.header("Content-Type");
     const String companionStatus = http.header("X-Companion-Status");
@@ -966,6 +968,8 @@ static bool sendVoice(size_t samples) {
         decodeHeader(http.header("X-Companion-Reply"));
     const String actionType = http.header("X-Companion-Action-Type");
     const String actionId = http.header("X-Companion-Action-Id");
+    const String audioMode = http.header("X-Companion-Audio-Mode");
+    fallbackAudio = audioMode == "fallback";
     Serial.printf("[VOICE] status=%s action=%s\n",
                   companionStatus.c_str(), actionType.c_str());
     Serial.printf("[VOICE] transcript: %.180s\n", transcript.c_str());
@@ -975,12 +979,17 @@ static bool sendVoice(size_t samples) {
       Serial.printf("[HTTP ERR] Unexpected content type: %s\n",
                     contentType.c_str());
       drawStatus("AUDIO ERROR", "Expected WAV", ERROR_FACE);
+    } else if (fallbackAudio) {
+      Serial.println("[VOICE] Gemini TTS unavailable; showing reply without fallback beep");
+      played = true;
     } else {
       played = playResponseAudio(http);
     }
     showCompanionHeaders(companionStatus, transcript, reply, actionType,
                          actionId);
-    Serial.printf("[PLAY] result=%s\n", played ? "complete" : "stopped/error");
+    Serial.printf("[PLAY] result=%s\n",
+                  fallbackAudio ? "fallback-text-only" :
+                  (played ? "complete" : "stopped/error"));
   } else {
     logHttpsFailure("voice POST", statusCode, client);
     const String errorBody = readErrorBody(http);

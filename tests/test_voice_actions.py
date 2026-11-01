@@ -321,6 +321,7 @@ def test_laptop_voice_endpoint_requires_authenticated_session_and_returns_transc
         "Create%20a%20task%20to%20review%20notes"
     )
     assert first.headers["x-companion-status"] == "confirmation_required"
+    assert first.headers["x-companion-audio-mode"] == "tts"
     conversation_id = first.headers["x-companion-conversation-id"]
     assert first.content == b"fake wav"
 
@@ -329,6 +330,7 @@ def test_laptop_voice_endpoint_requires_authenticated_session_and_returns_transc
     assert second.headers["x-companion-transcript"] == "Yes%20please"
     assert second.headers["x-companion-status"] == "completed"
     assert second.headers["x-companion-action-type"] == "create_task"
+    assert second.headers["x-companion-audio-mode"] == "tts"
     assert second.headers["x-companion-conversation-id"] == conversation_id
     with testing_session() as db:
         task = db.scalar(select(UserTask).where(UserTask.title == "Review notes"))
@@ -343,6 +345,39 @@ def test_laptop_voice_endpoint_requires_authenticated_session_and_returns_transc
     changes = client.get("/companion/changes")
     assert changes.status_code == 200
     assert changes.json()["action_type"] == "create_task"
+
+
+def test_laptop_voice_marks_tts_fallback_audio(voice_client, monkeypatch):
+    client, _, _ = voice_client
+    monkeypatch.setattr(
+        voice_service, "_gemini_transcribe", lambda _audio: "Hello"
+    )
+    monkeypatch.setattr(
+        voice_service,
+        "_gemini_text_json",
+        lambda _transcript, _prompt: {
+            "transcript": "Hello",
+            "intent": "chat",
+            "reply": "Hi",
+        },
+    )
+    fallback_wav = voice_service._generate_fallback_wav()
+    monkeypatch.setattr(
+        companion_router, "synthesize_reply", lambda _reply: fallback_wav
+    )
+
+    response = client.post(
+        "/companion/web/voice/turn",
+        headers={
+            "X-Voice-Session": secrets.token_urlsafe(32),
+            "Content-Type": "audio/wav",
+        },
+        content=make_wav(),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["x-companion-audio-mode"] == "fallback"
+    assert response.content == fallback_wav
 
 
 def test_browser_voice_requires_a_voice_session_header(voice_client):

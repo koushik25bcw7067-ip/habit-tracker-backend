@@ -7,6 +7,7 @@ import re
 import struct
 import time
 import wave
+from functools import lru_cache
 
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -210,6 +211,7 @@ def _post_with_retry(
 # Plays a short tone if Gemini TTS fails.
 # ============================================================
 
+@lru_cache(maxsize=1)
 def _generate_fallback_wav() -> bytes:
     buffer = BytesIO()
     sample_rate = 16000
@@ -239,6 +241,10 @@ def _generate_fallback_wav() -> bytes:
             wav.writeframes(struct.pack("<h", value))
 
     return buffer.getvalue()
+
+
+def is_fallback_wav(audio: bytes) -> bool:
+    return audio == _generate_fallback_wav()
 
 
 # ============================================================
@@ -559,12 +565,6 @@ def _synthesize(text: str) -> bytes:
 
         # Do not silently try non-TTS models.
         if response.status_code != 200:
-            logger.error(
-                "Gemini TTS HTTP %s: %s",
-                response.status_code,
-                response.text[:2000],
-            )
-
             response.raise_for_status()
 
         data = response.json()
@@ -615,6 +615,20 @@ def _synthesize(text: str) -> bytes:
             json.dumps(data)[:2000],
         )
 
+    except httpx.HTTPStatusError as error:
+        status_code = error.response.status_code
+        message = error.response.text[:500]
+        if status_code == 429:
+            logger.warning(
+                "Gemini TTS rate/quota limit (HTTP 429); returning fallback audio: %s",
+                message,
+            )
+        else:
+            logger.error(
+                "Gemini TTS provider rejected request (HTTP %s): %s",
+                status_code,
+                message,
+            )
     except Exception as error:
         logger.exception(
             "Gemini TTS generation failed: %s",

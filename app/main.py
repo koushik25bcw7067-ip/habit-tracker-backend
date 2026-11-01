@@ -70,6 +70,7 @@ app.add_middleware(
         "X-Companion-Action-Id",
         "X-Companion-Action-Type",
         "X-Companion-Conversation-Id",
+        "X-Companion-Audio-Mode",
     ],
 )
 
