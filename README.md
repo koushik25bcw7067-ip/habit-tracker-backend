@@ -120,8 +120,8 @@ notice, and manual test checklist are documented in
 
 ## AI configuration
 
-Gemini powers AI chat and voice. Habit tracking and rule-based features still
-work without an AI key.
+Gemini powers AI chat, voice transcription, and voice intent processing.
+Habit tracking and rule-based features still work without an AI key.
 
 Set:
 
@@ -135,9 +135,13 @@ The AI service sends only calculated habit statistics and related non-authentica
 Gemini requests use the native `generateContent` API. Do not set `AI_API_URL` or
 `AI_BASE_URL`; those legacy endpoint overrides are not used.
 
-Voice transcription, intent interpretation, and spoken replies use the
-backend's existing Gemini `AI_API_KEY`. No OpenAI API key is required. Do not
-expose provider keys in the frontend.
+Voice transcription and intent interpretation use the backend's Gemini
+`AI_API_KEY`. Spoken replies use Gemini by default; to use Azure Speech,
+configure `TTS_PROVIDER=azure`, `AZURE_SPEECH_KEY`,
+`AZURE_SPEECH_REGION=centralindia`, and
+`AZURE_SPEECH_VOICE=te-IN-ShrutiNeural`. Azure's F0 tier includes a limited
+monthly neural TTS allowance; monitor usage and provider quotas. Keep provider
+keys in backend environment variables and never expose them in the frontend.
 
 Website chat threads are stored per signed-in user. Browser voice conversations
 and each paired hardware device have their own saved thread, visible in the AI

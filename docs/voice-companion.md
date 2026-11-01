@@ -7,11 +7,13 @@ signed-in website record audio only after the user presses **Record voice
 command** or **Talk to me**. Press **Stop recording** to submit it; recordings
 stop automatically at 15 seconds. The browser converts the recording to mono,
 16-bit PCM WAV at 16 kHz, with microphone noise reduction enabled where
-supported. The backend uses the configured Gemini API key for a dedicated
-audio transcription pass, then interprets that transcript and selects an
-intent with Gemini. It preserves Telugu speech in Telugu script and mixed
-Telugu-English speech without translating it. Provider credentials are never
-sent to the browser.
+supported. The backend uses the configured Gemini API key for a dedicated audio
+transcription pass, then interprets that transcript and selects an intent with
+Gemini. Spoken replies use Gemini by default or Azure Speech when
+`TTS_PROVIDER=azure` is configured. Azure Speech returns RIFF WAV audio at
+24 kHz mono PCM for both the browser and ESP32. The workflow preserves Telugu
+speech in Telugu script and mixed Telugu-English speech without translating
+it. Provider credentials are never sent to the browser.
 
 Use a secure browser origin for microphone access: `http://localhost` during
 local development or HTTPS for a deployed frontend. Sign in first and start
@@ -106,10 +108,14 @@ completion, or user schemas. Before deployment, verify the production
 database's Alembic revision and create a backup, then apply migrations with
 `alembic upgrade head`.
 
-Gemini credentials (`AI_API_KEY`) are used for transcription, intent
-interpretation, and speech synthesis. No OpenAI API key is required. Do not
-expose the Gemini key in frontend environment variables. If speech synthesis
-is unavailable, the laptop UI uses browser speech as a fallback.
+Gemini credentials (`AI_API_KEY`) are used for transcription and intent
+interpretation. Set `TTS_PROVIDER=azure`,
+`AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`, and `AZURE_SPEECH_VOICE` to use
+Azure Speech for spoken replies; the Azure region must match the key's
+resource region. The F0 tier has a monthly character allowance, not unlimited
+usage. Do not expose provider keys in frontend environment variables. If
+server-side speech synthesis is unavailable, the laptop UI uses browser speech
+as a fallback.
 
 ## Manual laptop test checklist
 

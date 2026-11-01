@@ -192,6 +192,75 @@ def test_gemini_transcription_rejects_blank_audio_result(monkeypatch):
     assert error.value.status_code == 422
 
 
+def test_azure_tts_returns_wav_and_sends_telugu_ssml(monkeypatch):
+    monkeypatch.setattr(voice_service.settings, "tts_provider", "azure")
+    monkeypatch.setattr(voice_service.settings, "azure_speech_key", "speech-test-key")
+    monkeypatch.setattr(
+        voice_service.settings, "azure_speech_region", "centralindia"
+    )
+    monkeypatch.setattr(
+        voice_service.settings, "azure_speech_voice", "te-IN-ShrutiNeural"
+    )
+    captured = {}
+    audio_stream = BytesIO()
+    with wave.open(audio_stream, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(24000)
+        wav.writeframes(b"\x00\x00" * 240)
+
+    class Response:
+        content = audio_stream.getvalue()
+
+        @staticmethod
+        def raise_for_status():
+            pass
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr(voice_service.httpx, "post", fake_post)
+
+    audio = voice_service.synthesize_reply("సరే <task> & done")
+
+    assert audio == audio_stream.getvalue()
+    assert captured["url"] == (
+        "https://centralindia.tts.speech.microsoft.com/"
+        "cognitiveservices/v1"
+    )
+    assert captured["headers"]["Ocp-Apim-Subscription-Key"] == "speech-test-key"
+    assert captured["headers"]["X-Microsoft-OutputFormat"] == (
+        "riff-24khz-16bit-mono-pcm"
+    )
+    assert "<voice name=\"te-IN-ShrutiNeural\">" in captured["content"].decode()
+    assert "&lt;task&gt; &amp; done" in captured["content"].decode()
+
+
+def test_azure_tts_429_returns_fallback_wav(monkeypatch, caplog):
+    import httpx
+
+    monkeypatch.setattr(voice_service.settings, "tts_provider", "azure")
+    monkeypatch.setattr(voice_service.settings, "azure_speech_key", "speech-test-key")
+    monkeypatch.setattr(
+        voice_service.settings, "azure_speech_region", "centralindia"
+    )
+    request = httpx.Request(
+        "POST",
+        "https://centralindia.tts.speech.microsoft.com/cognitiveservices/v1",
+    )
+    response = httpx.Response(429, request=request)
+    monkeypatch.setattr(
+        voice_service.httpx, "post", lambda *_args, **_kwargs: response
+    )
+
+    audio = voice_service.synthesize_reply("Hello")
+
+    assert voice_service.is_fallback_wav(audio)
+    assert "quota/rate limit reached (HTTP 429)" in caplog.text
+
+
 @pytest.mark.parametrize(
     ("spoken", "expected"),
     [

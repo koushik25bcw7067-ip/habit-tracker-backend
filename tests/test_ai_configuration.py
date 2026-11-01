@@ -25,6 +25,21 @@ def test_gemini_api_key_is_optional_and_accepts_environment_name():
     assert settings.ai_api_key == "gemini-test-key"
 
 
+def test_tts_provider_and_azure_credentials_load_from_environment_names():
+    settings = Settings(
+        _env_file=None,
+        TTS_PROVIDER="azure",
+        AZURE_SPEECH_KEY="speech-test-key",
+        AZURE_SPEECH_REGION="centralindia",
+        AZURE_SPEECH_VOICE="te-IN-ShrutiNeural",
+    )
+
+    assert settings.tts_provider == "azure"
+    assert settings.azure_speech_key == "speech-test-key"
+    assert settings.azure_speech_region == "centralindia"
+    assert settings.azure_speech_voice == "te-IN-ShrutiNeural"
+
+
 def test_ai_service_uses_native_gemini_generate_content_protocol(monkeypatch):
     from app.services import ai_service
 

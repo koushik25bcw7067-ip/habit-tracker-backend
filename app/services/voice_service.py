@@ -10,6 +10,7 @@ import wave
 from functools import lru_cache
 
 from datetime import datetime, timedelta, timezone
+from html import escape
 from io import BytesIO
 from typing import Dict, Optional, Tuple
 
@@ -642,6 +643,80 @@ def _synthesize(text: str) -> bytes:
     return _generate_fallback_wav()
 
 
+def _synthesize_azure(text: str) -> bytes:
+    key = getattr(settings, "azure_speech_key", "").strip()
+    region = getattr(settings, "azure_speech_region", "").strip().lower()
+    voice = getattr(settings, "azure_speech_voice", "").strip()
+
+    if not key:
+        logger.error("AZURE_SPEECH_KEY is missing; returning fallback audio.")
+        return _generate_fallback_wav()
+    if not re.fullmatch(r"[a-z0-9]+", region):
+        logger.error("AZURE_SPEECH_REGION is invalid; returning fallback audio.")
+        return _generate_fallback_wav()
+    if not re.fullmatch(r"[a-z]{2}-[A-Z]{2}-[A-Za-z0-9]+", voice):
+        logger.error("AZURE_SPEECH_VOICE is invalid; returning fallback audio.")
+        return _generate_fallback_wav()
+    if not text or not text.strip():
+        logger.warning("Empty TTS text. Returning fallback audio.")
+        return _generate_fallback_wav()
+
+    locale = "-".join(voice.split("-")[:2])
+    escaped_voice = escape(voice, {'"': "&quot;"})
+    ssml = (
+        '<speak version="1.0" xml:lang="'
+        f'{locale}" xmlns="http://www.w3.org/2001/10/synthesis">'
+        f'<voice name="{escaped_voice}">'
+        f"{escape(text[:200])}"
+        "</voice></speak>"
+    )
+    endpoint = (
+        f"https://{region}.tts.speech.microsoft.com/"
+        "cognitiveservices/v1"
+    )
+
+    try:
+        response = httpx.post(
+            endpoint,
+            headers={
+                "Ocp-Apim-Subscription-Key": key,
+                "Content-Type": "application/ssml+xml",
+                "X-Microsoft-OutputFormat": "riff-24khz-16bit-mono-pcm",
+                "User-Agent": "AI-Habit-Tracker",
+            },
+            content=ssml.encode("utf-8"),
+            timeout=httpx.Timeout(30.0, connect=10.0),
+        )
+        response.raise_for_status()
+        audio = response.content
+        if audio[:4] != b"RIFF" or audio[8:12] != b"WAVE":
+            logger.error("Azure Speech returned a non-WAV audio response.")
+            return _generate_fallback_wav()
+        logger.info("Azure Speech TTS succeeded. WAV bytes: %s", len(audio))
+        return audio
+    except httpx.HTTPStatusError as error:
+        status_code = error.response.status_code
+        if status_code == 429:
+            logger.warning(
+                "Azure Speech TTS quota/rate limit reached (HTTP 429); "
+                "returning fallback audio."
+            )
+        else:
+            logger.error(
+                "Azure Speech TTS request failed (HTTP %s); returning fallback audio.",
+                status_code,
+            )
+    except httpx.TimeoutException:
+        logger.error("Azure Speech TTS timed out; returning fallback audio.")
+    except httpx.TransportError as error:
+        logger.error(
+            "Azure Speech TTS transport failed (%s); returning fallback audio.",
+            type(error).__name__,
+        )
+
+    return _generate_fallback_wav()
+
+
 # ============================================================
 # INTENT PROMPT
 # ============================================================
@@ -868,7 +943,14 @@ def process_voice_turn(
 def synthesize_reply(reply: str) -> bytes:
 
     try:
-        audio = _synthesize(reply)
+        provider = getattr(settings, "tts_provider", "gemini").strip().lower()
+        if provider == "azure":
+            audio = _synthesize_azure(reply)
+        elif provider == "gemini":
+            audio = _synthesize(reply)
+        else:
+            logger.error("Unsupported TTS_PROVIDER %r.", provider)
+            audio = _generate_fallback_wav()
 
         if (
             audio

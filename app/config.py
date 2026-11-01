@@ -23,6 +23,22 @@ class Settings(BaseSettings):
         default="gemini-2.5-flash-preview-tts",
         validation_alias=AliasChoices("TTS_MODEL"),
     )
+    tts_provider: str = Field(
+        default="gemini",
+        validation_alias=AliasChoices("TTS_PROVIDER"),
+    )
+    azure_speech_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("AZURE_SPEECH_KEY"),
+    )
+    azure_speech_region: str = Field(
+        default="centralindia",
+        validation_alias=AliasChoices("AZURE_SPEECH_REGION"),
+    )
+    azure_speech_voice: str = Field(
+        default="te-IN-ShrutiNeural",
+        validation_alias=AliasChoices("AZURE_SPEECH_VOICE"),
+    )
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
 
